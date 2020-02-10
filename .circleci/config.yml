@@ -202,6 +202,8 @@ workflows:
             - test_213_jdk8_jvm
           filters:
             <<: *filter_tags
+            branches:
+              ignore: /.*/
             # TODO: uncomment to enable snapshots
             # branches:
             #   only: 
