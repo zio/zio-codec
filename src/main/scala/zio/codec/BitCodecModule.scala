@@ -16,9 +16,9 @@ trait BitCodecModule extends CodecModule {
   private def interpret(input: Chunk[Input], codec: Array[CodecVM]): Either[DecodeError, Any] = {
     val stack: Stack[AnyRef] = Stack()
 
-    var i: Int = 0
+    var i: Int          = 0
     var inputIndex: Int = 0
-    var r0: AnyRef = null.asInstanceOf[AnyRef]
+    var r0: AnyRef      = null.asInstanceOf[AnyRef]
 
     while (i < codec.length) {
       val instr = codec(i)
@@ -51,7 +51,7 @@ trait BitCodecModule extends CodecModule {
 
     stack.pop() match {
       case null => Left(DecodeError("bug in our implementation, please report to us", 0))
-      case v => Right(v)
+      case v    => Right(v)
     }
   }
 }
