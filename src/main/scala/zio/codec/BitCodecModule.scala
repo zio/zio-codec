@@ -7,7 +7,7 @@ import zio.internal.Stack
 trait BitCodecModule extends CodecModule {
   type Input = Boolean
 
-  val uint16: Codec[Int] = consume.repN(16).map(Equiv.UInt16)
+  val uint16: Codec[Int] = consume.repN(16).map(Equiv.Bits.UInt16)
 
   @silent
   private def compileCodec[A](codec: Codec[A]): Array[CodecVM] = ???
