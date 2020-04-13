@@ -58,7 +58,7 @@ trait CodecModule {
   object Codec {
     private[zio] sealed case class Produce[A](a: A)                                                  extends Codec[A]
     private[zio] sealed case class Fail[A](error: String)                                            extends Codec[A]
-    private[zio] case object Consume                                                                 extends Codec[Input]
+    private[zio]       case object Consume                                                           extends Codec[Input]
     private[zio] sealed case class Map[A, B](equiv: Equiv[A, B], value: () => Codec[A])              extends Codec[B]
     private[zio] sealed case class Filter[A](value: () => Codec[A], filter: Set[A], not: Boolean)    extends Codec[A]
     private[zio] sealed case class Zip[A, B](left: () => Codec[A], right: () => Codec[B])            extends Codec[(A, B)]

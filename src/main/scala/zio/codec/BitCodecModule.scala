@@ -21,7 +21,7 @@ trait BitCodecModule extends CodecModule {
     var r0: AnyRef      = null.asInstanceOf[AnyRef]
 
     while (i < codec.length) {
-      val instr = codec(i)
+      val instr: CodecVM = codec(i)
       instr match {
         case CodecVM.Push(value) =>
           stack.push(value)
@@ -32,14 +32,14 @@ trait BitCodecModule extends CodecModule {
         case CodecVM.CheckSet(s) =>
           stack.push(s.contains(stack.pop()).asInstanceOf[AnyRef])
 
-        case CodecVM.CondJump(ifEqual, otherwise) =>
+        case CodecVM.JumpCond(ifEqual, otherwise) =>
           if (stack.pop().eq(stack.pop())) i = ifEqual else i = otherwise
 
         case CodecVM.Construct1(f) =>
-          f(stack.pop())
+          stack.push(f(stack.pop()))
 
         case CodecVM.Construct2(f) =>
-          f(stack.pop(), stack.pop())
+          stack.push(f(stack.pop(), stack.pop()))
 
         case CodecVM.Fail(err) =>
           return Left(DecodeError(err, i))
