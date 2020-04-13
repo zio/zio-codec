@@ -6,6 +6,12 @@ import zio.internal.Stack
 trait CharCodecModule extends CodecModule {
   type Input = Char
 
+  def token(t: String): Codec[Chunk[Char]] =
+    consume.repN(t.length).filter(Set(Chunk.fromIterable(t)))
+
+  def tokenAs[A](t: String, v: A): Codec[A] =
+    token(t).as(v, Chunk.fromIterable(t))
+
   def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
     val compiled = compileCodec(codec, 0)
 //    println(compiled.zipWithIndex.map { case (o, i) => i.toString.reverse.padTo(3, '0').reverse + ": " + o }.mkString("", "\n", "\n"))
@@ -50,6 +56,7 @@ trait CharCodecModule extends CodecModule {
           case Equiv.Left(_)      => Array(VM.Construct1(_.asInstanceOf[(AnyRef, _)]._1))
           case Equiv.Right(_)     => Array(VM.Construct1(_.asInstanceOf[(_, AnyRef)]._2))
           case Equiv.Ignore(_)    => Array(VM.Pop, VM.Push(().asInstanceOf[AnyRef]))
+          case Equiv.As(b, _)     => Array(VM.Pop, VM.Push(b.asInstanceOf[AnyRef]))
           case Equiv.Chars.String => Array(VM.Construct1(_.asInstanceOf[Chunk[Char]].mkString))
           case Equiv.Bits.UInt16  => ???
         }
@@ -58,7 +65,7 @@ trait CharCodecModule extends CodecModule {
         val lBail = offset + program.length + 1 + mapProgram.length
 
         program ++ Array(
-          VM.JumpCond(lBail, lMap)
+          VM.JumpEq(lBail, lMap)
         ) ++ mapProgram
 
       case Filter(value, in, mod) =>
@@ -73,17 +80,14 @@ trait CharCodecModule extends CodecModule {
         val lBail     = offset + program.length + 7
 
         program ++ Array(
-          VM.JumpCond(lBail, lFilter),
-          VM.Duplicate,
+          VM.JumpEq(lBail, lFilter),
+          VM.Duplicate, // filter
           VM.CheckSet(in.map(_.asInstanceOf[AnyRef])),
-          VM.Push((mod match {
-            case Inside  => true
-            case Outside => false
-          }).asInstanceOf[AnyRef]),
-          VM.JumpCond(lMatch, lMismatch),
-          VM.Pop,
+          VM.Push((mod match { case Inside => true; case Outside => false }).asInstanceOf[AnyRef]),
+          VM.JumpEq(lMatch, lMismatch),
+          VM.Pop, // mismatch
           VM.Push(NoValue)
-        )
+        ) // match, bail
 
       case Zip(left, right) =>
         // todo: check result
@@ -101,7 +105,7 @@ trait CharCodecModule extends CodecModule {
       case Rep(value, None, None) =>
         val program = Array(
           VM.Push(Chunk.empty),
-          VM.FramePush
+          VM.FramePush // repeat
         ) ++ compileCodec(value(), offset + 2) ++ Array(
           VM.Duplicate,
           VM.Push(NoValue)
@@ -112,12 +116,52 @@ trait CharCodecModule extends CodecModule {
         val lFinish = offset + program.length + 4
 
         program ++ Array(
-          VM.JumpCond(lFinish, lAccum),
-          VM.FramePop,
+          VM.JumpEq(lFinish, lAccum),
+          VM.FramePop, // accumulate
           VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
           VM.Jump(lRepeat),
-          VM.FrameLoad,
+          VM.FrameLoad, // finish
           VM.Pop
+        )
+
+      case Rep(value, Some(min), Some(max)) if min == max =>
+        // todo: check for negative value
+        val program = Array(
+          VM.Push(0.asInstanceOf[AnyRef]),
+          VM.Push(Chunk.empty),
+          VM.FramePush // repeat
+        ) ++ compileCodec(value(), offset + 3) ++ Array(
+          VM.Duplicate,
+          VM.Push(NoValue)
+        )
+
+        val lRepeat = offset + 2
+        val lAccum  = offset + program.length + 1
+        val lIgnore = offset + program.length + 14
+        val lMore   = offset + program.length + 9
+        val lEnough = offset + program.length + 11
+        val lFinish = offset + program.length + 19
+
+        program ++ Array(
+          VM.JumpEq(lIgnore, lAccum),
+          VM.FramePop, // accumulate element
+          VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
+          VM.StoreRegister0,
+          VM.Push(1.asInstanceOf[AnyRef]),
+          VM.Add,
+          VM.Duplicate,
+          VM.Push(min.asInstanceOf[AnyRef]),
+          VM.JumpEq(lEnough, lMore),
+          VM.LoadRegister0, // more
+          VM.Jump(lRepeat),
+          VM.Pop, // enough
+          VM.LoadRegister0,
+          VM.Jump(lFinish),
+          VM.FrameLoad, // ignore element
+          VM.Pop,
+          VM.StoreRegister0,
+          VM.Pop,
+          VM.LoadRegister0
         )
 
       case Rep(_, _, _) =>
@@ -165,7 +209,7 @@ trait CharCodecModule extends CodecModule {
         case Jump(to) =>
           i = to
 
-        case JumpCond(ifEqual, otherwise) =>
+        case JumpEq(ifEqual, otherwise) =>
           if (stack.pop().eq(stack.pop())) i = ifEqual else i = otherwise
 
         case Construct1(f) =>
@@ -198,6 +242,10 @@ trait CharCodecModule extends CodecModule {
 
         case LoadRegister0 =>
           stack.push(r0)
+          i += 1
+
+        case Add =>
+          stack.push((stack.pop().asInstanceOf[Int] + stack.pop().asInstanceOf[Int]).asInstanceOf[AnyRef])
           i += 1
 
         case FramePush =>

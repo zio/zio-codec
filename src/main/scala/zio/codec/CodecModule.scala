@@ -11,7 +11,8 @@ trait CodecModule {
 
     def map[B](equiv: Equiv[A, B]): Codec[B] = Map(equiv, () => self)
 
-    def ignore(a: A): Codec[Unit] = map(Equiv.Ignore(a))
+    def ignore(a: A): Codec[Unit]   = map(Equiv.Ignore(a))
+    def as[B](b: B, a: A): Codec[B] = map(Equiv.As(b, a))
 
     def filter(set: Set[A]): Codec[A]                                = Filter(() => self, set, FilterMode.Inside)
     def filterNot(set: Set[A]): Codec[A]                             = Filter(() => self, set, FilterMode.Outside)
