@@ -25,9 +25,10 @@ object CodecJsonTest {
   // todo: val field: Codec[(String, Val)] = (string <~ (':', colon)) ~ js
   val field: Codec[(String, String)] = (string <~ (':', colon)) ~ string
 
-//  val dec: Chunk[Char] => Either[DecodeError, (Int, Unit)] = decoder(spacing)
   val dec: Chunk[Char] => Either[DecodeError, (Int, (String, String))] = decoder(field)
 
   def main(args: Array[String]): Unit =
+    //println(dec(Chunk.fromArray(""""pro""".toCharArray)))
+    //println()
     println(dec(Chunk.fromArray(""" "prop1": "val1" """.toCharArray)))
 }

@@ -20,6 +20,8 @@ trait CharCodecModule extends CodecModule {
 
   private def compileCodec[A](codec: Codec[A], offset: Int): Array[CodecVM] = {
     import Codec._
+    import Codec.FilterMode._
+
     val VM = CodecVM
 
     codec match {
@@ -38,29 +40,53 @@ trait CharCodecModule extends CodecModule {
           VM.Read(None, None)
         )
 
-      case Map(_, value) =>
-        // todo
-        compileCodec(value(), offset) ++ Array[CodecVM](
-          )
-
-      case Filter(value, in, not) =>
-        val program = compileCodec(value(), offset) ++ Array(
+      case map: Map[_, _] =>
+        val program = compileCodec(map.value(), offset) ++ Array(
           VM.Duplicate,
-          VM.CheckSet(in.map(_.asInstanceOf[AnyRef])),
-          VM.Push((!not).asInstanceOf[AnyRef])
+          VM.Push(NoValue)
         )
 
-        val lMismatch = offset + program.length + 1
-        val lMatch    = offset + program.length + 3
+        val mapProgram: Array[CodecVM] = map.equiv match {
+          case Equiv.Left(_)      => Array(VM.Construct1(_.asInstanceOf[(AnyRef, _)]._1))
+          case Equiv.Right(_)     => Array(VM.Construct1(_.asInstanceOf[(_, AnyRef)]._2))
+          case Equiv.Ignore(_)    => Array(VM.Pop, VM.Push(().asInstanceOf[AnyRef]))
+          case Equiv.Chars.String => Array(VM.Construct1(_.asInstanceOf[Chunk[Char]].mkString))
+          case Equiv.Bits.UInt16  => ???
+        }
+
+        val lMap  = offset + program.length + 1
+        val lBail = offset + program.length + 1 + mapProgram.length
 
         program ++ Array(
+          VM.JumpCond(lBail, lMap)
+        ) ++ mapProgram
+
+      case Filter(value, in, mod) =>
+        val program = compileCodec(value(), offset) ++ Array(
+          VM.Duplicate,
+          VM.Push(NoValue)
+        )
+
+        val lFilter   = offset + program.length + 1
+        val lMismatch = offset + program.length + 5
+        val lMatch    = offset + program.length + 7
+        val lBail     = offset + program.length + 7
+
+        program ++ Array(
+          VM.JumpCond(lBail, lFilter),
+          VM.Duplicate,
+          VM.CheckSet(in.map(_.asInstanceOf[AnyRef])),
+          VM.Push((mod match {
+            case Inside  => true
+            case Outside => false
+          }).asInstanceOf[AnyRef]),
           VM.JumpCond(lMatch, lMismatch),
           VM.Pop,
-          VM.Push(NoValue),
-          VM.Noop // todo: not needed
+          VM.Push(NoValue)
         )
 
       case Zip(left, right) =>
+        // todo: check result
         val program = compileCodec(left(), offset)
         program ++ compileCodec(right(), offset + program.length) ++ Array(
           VM.Construct2(Tuple2.apply)
@@ -74,7 +100,7 @@ trait CharCodecModule extends CodecModule {
 
       case Rep(value, None, None) =>
         val program = Array(
-          VM.Push(List.empty[AnyRef]),
+          VM.Push(Chunk.empty),
           VM.FramePush
         ) ++ compileCodec(value(), offset + 2) ++ Array(
           VM.Duplicate,
@@ -88,11 +114,10 @@ trait CharCodecModule extends CodecModule {
         program ++ Array(
           VM.JumpCond(lFinish, lAccum),
           VM.FramePop,
-          VM.Construct2((l, a) => a :: l.asInstanceOf[List[AnyRef]]),
+          VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
           VM.Jump(lRepeat),
           VM.FrameLoad,
-          VM.Pop,
-          VM.Construct1(l => l.asInstanceOf[List[AnyRef]].reverse) // todo: work with array?
+          VM.Pop
         )
 
       case Rep(_, _, _) =>
@@ -125,7 +150,7 @@ trait CharCodecModule extends CodecModule {
             stack.push(input(inputIndex).asInstanceOf[AnyRef])
             i += 1
           } else {
-            return Left(DecodeError("EOI", i))
+            return Left(DecodeError("EOI", inputIndex))
           }
 
         case Read(_, _) =>

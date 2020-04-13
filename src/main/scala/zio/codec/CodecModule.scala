@@ -13,8 +13,8 @@ trait CodecModule {
 
     def ignore(a: A): Codec[Unit] = map(Equiv.Ignore(a))
 
-    def filter(set: Set[A]): Codec[A]                                = Filter(() => self, set, not = false)
-    def filterNot(set: Set[A]): Codec[A]                             = Filter(() => self, set, not = true)
+    def filter(set: Set[A]): Codec[A]                                = Filter(() => self, set, FilterMode.Inside)
+    def filterNot(set: Set[A]): Codec[A]                             = Filter(() => self, set, FilterMode.Outside)
     def filter(f: A => Boolean)(implicit e: Enumerable[A]): Codec[A] = filter(e.enumerate.filter(f).toSet)
 
     def zip[B](that: => Codec[B]): Codec[(A, B)] = Zip(() => self, () => that)
@@ -60,10 +60,16 @@ trait CodecModule {
     private[zio] sealed case class Fail[A](error: String)                                            extends Codec[A]
     private[zio]       case object Consume                                                           extends Codec[Input]
     private[zio] sealed case class Map[A, B](equiv: Equiv[A, B], value: () => Codec[A])              extends Codec[B]
-    private[zio] sealed case class Filter[A](value: () => Codec[A], filter: Set[A], not: Boolean)    extends Codec[A]
+    private[zio] sealed case class Filter[A](value: () => Codec[A], filter: Set[A], mod: FilterMode) extends Codec[A]
     private[zio] sealed case class Zip[A, B](left: () => Codec[A], right: () => Codec[B])            extends Codec[(A, B)]
     private[zio] sealed case class Alt[A, B](left: () => Codec[A], right: () => Codec[B])            extends Codec[Either[A, B]]
     private[zio] sealed case class Rep[A](value: () => Codec[A], min: Option[Int], max: Option[Int]) extends Codec[Chunk[A]]
+
+    private[zio] sealed trait FilterMode
+    private[zio] object FilterMode {
+      case object Inside  extends FilterMode
+      case object Outside extends FilterMode
+    }
   }
   // format: on
 }
