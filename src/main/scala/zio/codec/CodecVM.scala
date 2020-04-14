@@ -12,11 +12,10 @@ object CodecVM {
   private[zio] final case class Construct2(f: (AnyRef, AnyRef) => AnyRef) extends CodecVM // pop 2 things, pass to f and push to stack
   private[zio] final case class Fail(err: String)                         extends CodecVM
   private[zio] final case object Pop                                      extends CodecVM // pop 1 thing
-  private[zio] final case object Noop                                     extends CodecVM // do nothing
   private[zio] final case object Duplicate                                extends CodecVM // duplicate stack head
   private[zio] final case object StoreRegister0                           extends CodecVM // pop 1 thing from stack and store in var 0
   private[zio] final case object LoadRegister0                            extends CodecVM // push var 0
-  private[zio] final case object Add                                      extends CodecVM // pop 2 things, add, push result
+  private[zio] final case object IAdd                                     extends CodecVM // pop 2 integers, add, push result
   private[zio] final case object FramePush                                extends CodecVM // push read index to stack
   private[zio] final case object FramePop                                 extends CodecVM // pop read index from stack
   private[zio] final case object FrameLoad                                extends CodecVM // pop read index from stack and assign to read index

@@ -29,6 +29,7 @@ trait CodecModule {
     def orElseEither[B](that: => Codec[B]): Codec[Either[A, B]] = Alt(() => self, () => that)
     def |[B](that: => Codec[B]): Codec[Either[A, B]]            = orElseEither(that)
 
+    // todo: N should be natural
     def repRange(range: Range): Codec[Chunk[A]] = Rep(() => self, Some(range.start), Some(range.end))
     def repN(n: Int): Codec[Chunk[A]]           = Rep(() => self, Some(n), Some(n))
     def rep: Codec[Chunk[A]]                    = Rep(() => self, None, None)
