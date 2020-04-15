@@ -1,7 +1,7 @@
 package zio.codec.examples
 
 import zio.Chunk
-import zio.codec.{ CharCodecModule, DecodeError, Equiv }
+import zio.codec.{ CharCodecModule, Equiv }
 
 object CodecJsonTest {
 
@@ -27,13 +27,27 @@ object CodecJsonTest {
   def char(c: Char): Codec[Char] =
     consume.filter(Set(c))
 
-  val colon: Codec[Char] = char(':')
-  val quote: Codec[Char] = char('"')
+  val dot: Codec[Char]      = char('.')
+  val comma: Codec[Char]    = char(',')
+  val colon: Codec[Char]    = char(':')
+  val quote: Codec[Char]    = char('"')
+  val bracket1: Codec[Char] = char('[')
+  val bracket2: Codec[Char] = char(']')
+  val brace1: Codec[Char]   = char('{')
+  val brace2: Codec[Char]   = char('}')
 
   val spacing: Codec[Unit] =
     consume.filter(Set(' ', '\n', '\r')).rep.ignore(Chunk.empty)
 
-  val `null`: Codec[Null.type] = tokenAs("null", Null)
+  val digits: Codec[Chunk[Char]]   = consume.filter(Set('0', '1', '2', '3', '4', '5', '6', '7', '8', '9')).rep
+  val sign: Codec[Option[Char]]    = consume.filter(Set('-', '+')).option
+  val integral: Codec[Chunk[Char]] = digits
+
+  val num: Codec[(Option[Char], Chunk[Char])] = sign ~ integral
+
+  val `null`: Codec[Null.type]   = tokenAs("null", Null)
+  val `true`: Codec[True.type]   = tokenAs("true", True)
+  val `false`: Codec[False.type] = tokenAs("false", False)
 
   val string: Codec[String] =
     ((spacing ~ quote, ((), '"')) ~> consume.filterNot(Set('\"', '\\')).rep <~ ('"', quote)).map(Chars.String)
@@ -41,16 +55,19 @@ object CodecJsonTest {
   // todo: val field: Codec[(String, Val)] = (string <~ (':', colon)) ~ js
   val field: Codec[(String, String)] = (string <~ (':', colon)) ~ string
 
-  val js: Codec[Either[(String, String), Js.Null.type]] =
-    (spacing, ()) ~> (field | `null`) <~ ((), spacing)
+  val js = (spacing, ()) ~> (field | `true` | `false` | `null` | num) <~ ((), spacing)
 
-  val dec: Chunk[Char] => Either[DecodeError, (Int, Either[(String, String), Js.Null.type])] = decoder(js)
+  val dec = decoder(js)
 
   def main(args: Array[String]): Unit = {
     println(dec(Chunk.fromArray("""kkk""".toCharArray)))
     println(dec(Chunk.fromArray(""""pro""".toCharArray)))
 
-    println(dec(Chunk.fromArray(""" null """.toCharArray)))
     println(dec(Chunk.fromArray(""" "prop1": "val1" """.toCharArray)))
+    println(dec(Chunk.fromArray(""" true """.toCharArray)))
+    println(dec(Chunk.fromArray(""" false """.toCharArray)))
+    println(dec(Chunk.fromArray(""" null """.toCharArray)))
+    println(dec(Chunk.fromArray(""" 5 """.toCharArray)))
+    println(dec(Chunk.fromArray(""" -3 """.toCharArray)))
   }
 }
