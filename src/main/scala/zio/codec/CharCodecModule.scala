@@ -118,6 +118,32 @@ trait CharCodecModule extends CodecModule {
             VM.Construct2(Tuple2.apply)
           )
 
+      case Opt(value) =>
+        val program = Array(
+          VM.FramePush
+        ) ++ compileCodec(value(), offset + 1) ++ Array(
+          VM.Duplicate,
+          VM.Push(NoValue)
+        )
+
+        val lSome = offset + program.length + 1
+        val lNone = offset + program.length + 4
+        val lExit = offset + program.length + 7
+
+        // format: off
+        program ++ Array(
+          VM.JumpEq(lNone, lSome),
+
+          VM.FramePop,                 // some
+          VM.Construct1(Some.apply),
+          VM.Jump(lExit),
+
+          VM.FrameLoad,                // none
+          VM.Pop,
+          VM.Push(None)
+        )                              // exit
+        // format: on
+
       case Alt(left, right) =>
         val programL = Array(
           VM.FramePush
@@ -178,6 +204,7 @@ trait CharCodecModule extends CodecModule {
         )
         // format: on
 
+      // todo: remove guard! bug is Scala prevents exhaustive matching
       case Rep(value, Some(min), Some(max)) if min == max =>
         val program = Array(
           VM.Push(0.asInstanceOf[AnyRef]),
@@ -205,7 +232,7 @@ trait CharCodecModule extends CodecModule {
           VM.Push(1.asInstanceOf[AnyRef]),
           VM.IAdd,
           VM.Duplicate,
-          VM.Push(math.max(1, max).asInstanceOf[AnyRef]),
+          VM.Push(math.max(1, max).asInstanceOf[AnyRef]), // todo: it's always 1 or more, is it correct?
           VM.JumpEq(lEnough, lMore),
 
           VM.LoadRegister0,            // more

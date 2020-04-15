@@ -29,12 +29,13 @@ trait CodecModule {
     def orElseEither[B](that: => Codec[B]): Codec[Either[A, B]] = Alt(() => self, () => that)
     def |[B](that: => Codec[B]): Codec[Either[A, B]]            = orElseEither(that)
 
+    def option: Codec[Option[A]] = Opt(() => self)
+
     // todo: N should be natural
     def repRange(range: Range): Codec[Chunk[A]] = Rep(() => self, Some(range.start), Some(range.end))
     def repN(n: Int): Codec[Chunk[A]]           = Rep(() => self, Some(n), Some(n))
     def rep: Codec[Chunk[A]]                    = Rep(() => self, None, None)
     def * : Codec[Chunk[A]]                     = rep
-
   }
 
   implicit final class ToZipOps1[A](self: (Codec[A], A)) {
@@ -64,6 +65,7 @@ trait CodecModule {
     private[zio] sealed case class Map[A, B](equiv: Equiv[A, B], value: () => Codec[A])              extends Codec[B]
     private[zio] sealed case class Filter[A](value: () => Codec[A], filter: Set[A], mod: FilterMode) extends Codec[A]
     private[zio] sealed case class Zip[A, B](left: () => Codec[A], right: () => Codec[B])            extends Codec[(A, B)]
+    private[zio] sealed case class Opt[A](value: () => Codec[A])                                     extends Codec[Option[A]]
     private[zio] sealed case class Alt[A, B](left: () => Codec[A], right: () => Codec[B])            extends Codec[Either[A, B]]
     private[zio] sealed case class Rep[A](value: () => Codec[A], min: Option[Int], max: Option[Int]) extends Codec[Chunk[A]]
 
