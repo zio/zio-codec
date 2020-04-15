@@ -62,7 +62,7 @@ object BuildHelper {
         Seq("-Xexperimental") ++ stdOptsUpto212
     }
 
-  val zioVersion = "1.0.0-RC17"
+  val zioVersion = "1.0.0-RC18-2"
 
   def buildInfoSettings(packageName: String) =
     Seq(
