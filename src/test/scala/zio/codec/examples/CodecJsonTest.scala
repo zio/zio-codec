@@ -24,25 +24,22 @@ object CodecJsonTest {
   import Equiv._
   import JsonCodec._
 
-  def char(c: Char): Codec[Char] =
-    consume.filter(Set(c))
-
-  val dot: Codec[Char]      = char('.')
-  val comma: Codec[Char]    = char(',')
-  val colon: Codec[Char]    = char(':')
-  val quote: Codec[Char]    = char('"')
-  val bracket1: Codec[Char] = char('[')
-  val bracket2: Codec[Char] = char(']')
-  val brace1: Codec[Char]   = char('{')
-  val brace2: Codec[Char]   = char('}')
+  val dot: Codec[Char]      = consume.oneOf('.')
+  val comma: Codec[Char]    = consume.oneOf(',')
+  val colon: Codec[Char]    = consume.oneOf(':')
+  val quote: Codec[Char]    = consume.oneOf('"')
+  val bracket1: Codec[Char] = consume.oneOf('[')
+  val bracket2: Codec[Char] = consume.oneOf(']')
+  val brace1: Codec[Char]   = consume.oneOf('{')
+  val brace2: Codec[Char]   = consume.oneOf('}')
 
   val spacing: Codec[Unit] =
-    consume.filter(Set(' ', '\n', '\r')).rep.ignore(Chunk.empty)
+    consume.oneOf(' ', '\n', '\r').rep.ignore(Chunk.empty)
 
-  val digit: Codec[Char]             = consume.filter(Set('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'))
-  val sign: Codec[Option[Char]]      = consume.filter(Set('-', '+')).option
+  val digit: Codec[Char]             = betweenChar('0', '9')
+  val sign: Codec[Option[Char]]      = consume.oneOf('-', '+').option
   val fractional: Codec[Chunk[Char]] = (dot, '.') ~> digit.rep
-  val exponent: Codec[Chunk[Char]]   = (consume.filter(Set('e', 'E')) ~ sign, ('E', Some('+'))) ~> digit.rep
+  val exponent: Codec[Chunk[Char]]   = (consume.oneOf('e', 'E') ~ sign, ('E', Some('+'))) ~> digit.rep
   // todo: repRange(1 to 100)
   val integral: Codec[(Char, Chunk[Char])] = digit ~ digit.rep
 

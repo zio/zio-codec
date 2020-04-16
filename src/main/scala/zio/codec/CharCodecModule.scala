@@ -5,13 +5,15 @@ import zio.internal.Stack
 
 trait CharCodecModule extends CodecModule {
   type Input = Char
-
   // todo: consumeN
-  def token(t: String): Codec[Chunk[Char]] =
+  def token(t: String): Codec[Chunk[Input]] =
     consume.repN(t.length).filter(Set(Chunk.fromIterable(t)))
 
   def tokenAs[A](t: String, v: A): Codec[A] =
     token(t).as(v, Chunk.fromIterable(t))
+
+  def betweenChar(begin: Input, end: Input): Codec[Input] =
+    consume.filter((begin to end).toSet)
 
   def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
     val compiled = compileCodec(codec, 0)
