@@ -56,6 +56,7 @@ trait CharCodecModule extends CodecModule {
         val mapProgram: Array[CodecVM] = map.equiv match {
           case Equiv.Left(_)      => Array(VM.Construct1(_.asInstanceOf[(AnyRef, _)]._1))
           case Equiv.Right(_)     => Array(VM.Construct1(_.asInstanceOf[(_, AnyRef)]._2))
+          case Equiv.Merge()      => Array(VM.Construct1(_.asInstanceOf[Either[AnyRef, AnyRef]].merge))
           case Equiv.Ignore(_)    => Array(VM.Pop, VM.Push(().asInstanceOf[AnyRef]))
           case Equiv.As(b, _)     => Array(VM.Pop, VM.Push(b.asInstanceOf[AnyRef]))
           case Equiv.Chars.String => Array(VM.Construct1(_.asInstanceOf[Chunk[Char]].mkString))
@@ -107,16 +108,25 @@ trait CharCodecModule extends CodecModule {
 
         val lCont1 = offset + programL.length + 1
         val lCont2 = offset + programL.length + 1 + programR.length + 1
-        val lBail  = offset + programL.length + 1 + programR.length + 2
+        val lClean = offset + programL.length + 1 + programR.length + 3
+        val lExit  = offset + programL.length + 1 + programR.length + 6
 
+        // format: off
         programL ++
           Array(
-            VM.JumpEq(lBail, lCont1)
-          ) ++ programR ++
+            VM.JumpEq(lExit, lCont1)
+          ) ++ programR ++                  // continue to second codec
           Array(
-            VM.JumpEq(lBail, lCont2),
-            VM.Construct2(Tuple2.apply)
-          )
+            VM.JumpEq(lClean, lCont2),
+
+            VM.Construct2(Tuple2.apply),    // continue to construct a tuple
+            VM.Jump(lExit),
+
+            VM.Pop,                         // clean up
+            VM.Pop,
+            VM.Push(NoValue)
+          )                                 // exit
+        // format: on
 
       case Opt(value) =>
         val program = Array(
@@ -285,7 +295,7 @@ trait CharCodecModule extends CodecModule {
 
         case CheckSet(s) =>
           val v1 = stack.pop()
-//          println(v1.toString + " in " + s)
+//          println(s"($inputIndex) " + v1.toString + " in " + s)
           stack.push(s.contains(v1).asInstanceOf[AnyRef])
           i += 1
 
