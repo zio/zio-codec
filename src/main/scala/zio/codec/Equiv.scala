@@ -8,6 +8,8 @@ object Equiv {
   final case class Left[A, B](b: B)  extends Equiv[(A, B), A]
   final case class Right[A, B](a: A) extends Equiv[(A, B), B]
 
+  final case class Merge[A]() extends Equiv[Either[A, A], A]
+
   final case class Ignore[A](a: A)      extends Equiv[A, Unit]
   final case class As[A, B](b: B, a: A) extends Equiv[A, B]
 
