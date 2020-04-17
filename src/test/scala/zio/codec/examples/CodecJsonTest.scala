@@ -63,6 +63,7 @@ object CodecJsonTest {
   val str: Codec[Str] = string
     .map(Equiv.ForTesting(Str.apply))
 
+  // todo: map to list, then to case class
   val arr: Codec[Arr] =
     ((bracket1, '[') ~> (js ~ ((comma, ',') ~> js).rep) <~ (((), ']'), spacing ~ bracket2))
       .map(Equiv.ForTesting({
@@ -71,12 +72,14 @@ object CodecJsonTest {
 
   val field: Codec[(String, Val)] = (string <~ (':', colon)) ~ js
 
+  // todo: map to list, then to case class
   val obj: Codec[Obj] =
     ((brace1, '{') ~> (field ~ ((comma, ',') ~> field).rep <~ (((), '}'), spacing ~ brace2)))
       .map(Equiv.ForTesting({
         case (head, rest) => Obj(head :: rest.toList: _*)
       }))
 
+  // todo: map to coproduct
   lazy val js: Codec[Val] = ((spacing, ()) ~> (obj | arr | str | `true` | `false` | `null` | num) <~ ((), spacing))
     .map(Equiv.ForTesting({
       case Left(Left(Left(Left(Left(Left(v))))))  => v
@@ -111,8 +114,7 @@ object CodecJsonTest {
     println(dec(Chunk.fromArray("""[ [ 111, 222, 333 ], "ss", true, false, null, -12 ]""".toCharArray)))
     println()
 
-    // ((),Right((List(),Obj(List((firstName,Str(John)), (lastName,Str(Smith)), (age,Num(25.0)), (address,Obj(List((streetAddress,Str(21 2nd Street)), (city,Str(New York)), (state,Str(NY)), (postalCode,Num(10021.0))))), (phoneNumbers,Arr(List(Obj(List((type,Str(home)), (number,Str(212 555-1234)))), Obj(List((type,Str(fax)), (number,Str(646 555-4567))))))))))))
-    //     Right((372,   Obj(List((firstName,Str(John)), (lastName,Str(Smith)), (age,Num(25.0)), (address,Obj(List((streetAddress,Str(21 2nd Street)), (city,Str(New York)), (state,Str(NY)), (postalCode,Num(10021.0))))), (phoneNumbers,Arr(List(Obj(List((type,Str(home)), (number,Str(212 555-1234)))), Obj(List((type,Str(fax)), (number,Str(646 555-4567)))))))))))
+    // Right((372, Obj(List((firstName,Str(John)), (lastName,Str(Smith)), (age,Num(25.0)), (address,Obj(List((streetAddress,Str(21 2nd Street)), (city,Str(New York)), (state,Str(NY)), (postalCode,Num(10021.0))))), (phoneNumbers,Arr(List(Obj(List((type,Str(home)), (number,Str(212 555-1234)))), Obj(List((type,Str(fax)), (number,Str(646 555-4567)))))))))))
     println(dec(value))
 
     val t1: Long = System.nanoTime()
@@ -126,11 +128,13 @@ object CodecJsonTest {
   }
 
   // parserz 0.1.4
+  //    10,000  in    - sec
   //   100,000  in  3.3 sec
   // 1,000,000  in 24.9 sec
 
   // zio-codec 0.0.1
-  //   100,000  in 17.8 sec
+  //    10,000  in  2.2 sec
+  //   100,000  in 17.6 sec
   // 1,000,000  in    ? sec
 
   val value: Chunk[Char] =
