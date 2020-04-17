@@ -10,7 +10,9 @@ object CodecVM {
   private[zio] final case class JumpEq(ifEqual: Int, otherwise: Int)      extends CodecVM // pop 2 things and jump to new address
   private[zio] final case class Construct1(f: AnyRef => AnyRef)           extends CodecVM // pop 1 thing, pass to f and push to stack
   private[zio] final case class Construct2(f: (AnyRef, AnyRef) => AnyRef) extends CodecVM // pop 2 things, pass to f and push to stack
-  private[zio] final case class Fail(err: String)                         extends CodecVM
+  private[zio] final case class Fail(err: String)                         extends CodecVM // exit with failure
+  private[zio] final case class Invoke(name: Int, address: Int)           extends CodecVM // create a frame and jump to address
+  private[zio] final case class Return(name: Int)                         extends CodecVM // return from frame and jump to next instruction after invocation
   private[zio] final case object Pop                                      extends CodecVM // pop 1 thing
   private[zio] final case object Duplicate                                extends CodecVM // duplicate stack head
   private[zio] final case object StoreRegister0                           extends CodecVM // pop 1 thing from stack and store in var 0
