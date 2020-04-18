@@ -32,8 +32,8 @@ trait BitCodecModule extends CodecModule {
         case CodecVM.CheckSet(s) =>
           stack.push(s.contains(stack.pop()).asInstanceOf[AnyRef])
 
-        case CodecVM.JumpEq(ifEqual, otherwise) =>
-          if (stack.pop().eq(stack.pop())) i = ifEqual else i = otherwise
+        case CodecVM.ACmpEq(address) =>
+          if (stack.pop().eq(stack.pop())) i = address else i += 1
 
         case CodecVM.Construct1(f) =>
           stack.push(f(stack.pop()))
