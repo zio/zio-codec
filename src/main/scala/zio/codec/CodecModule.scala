@@ -14,6 +14,7 @@ trait CodecModule {
     final def ignore(a: A): Codec[Unit]   = map(Equiv.Ignore(a))
     final def as[B](b: B, a: A): Codec[B] = map(Equiv.As(b, a))
 
+    final def oneOf(s: A*): Codec[A]                                       = filter(s.toSet)
     final def filter(set: Set[A]): Codec[A]                                = Filter(() => self, set, FilterMode.Inside)
     final def filterNot(set: Set[A]): Codec[A]                             = Filter(() => self, set, FilterMode.Outside)
     final def filter(f: A => Boolean)(implicit e: Enumerable[A]): Codec[A] = filter(e.enumerate.filter(f).toSet)
