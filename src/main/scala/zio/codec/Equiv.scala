@@ -13,6 +13,9 @@ object Equiv {
   final case class Ignore[A](a: A)      extends Equiv[A, Unit]
   final case class As[A, B](b: B, a: A) extends Equiv[A, B]
 
+  // todo: remove
+  final case class ForTesting[A, B](f: A => B) extends Equiv[A, B]
+
   object Bits {
     final case object UInt16 extends Equiv[Chunk[Boolean], Int]
   }
