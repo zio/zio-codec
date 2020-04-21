@@ -3,7 +3,7 @@ package zio.codec.examples
 import zio.Chunk
 import zio.test._
 import zio.test.Assertion._
-import zio.codec.{ CharCodecModule, Equiv }
+import zio.codec.{ CharCodecModule }
 
 object CharCodecSpec extends DefaultRunnableSpec {
   object CharTest extends CharCodecModule
@@ -14,7 +14,7 @@ object CharCodecSpec extends DefaultRunnableSpec {
   def decodeSuccess[A](c: Codec[A], input: Chunk[Char])(expected: A) =
     assert(decoder(c)(input))(isRight(equalTo((input.size - 1, expected))))
 
-  val genString1 = Gen.string1(Gen.anyChar)
+  val genString1 = Gen.string1(Gen.alphaNumericChar)
 
   val spec = suite("CharCodecSpec")(
     testM("token")(
@@ -40,22 +40,39 @@ object CharCodecSpec extends DefaultRunnableSpec {
       )
     ),
     testM("rep")(
-      check(genString1, Gen.listOf1(Gen.string1(Gen.elements(' ')))) { (str, w) =>
-        val pattern = (token(str) ~ consume.oneOf(' ').rep).rep
-          .map(
-            Equiv.ForTesting(
-              _.fold[(Chunk[Input], Chunk[Input])]((Chunk.empty, Chunk.empty))((a, b) => (a._1 ++ b._1, a._2 ++ b._2))
-            )
-          )
-        decodeSuccess(pattern, toChunk(w.map(str + _).mkString))((toChunk(str * w.length), toChunk(w.mkString)))
+      check(Gen.anyChar, Gen.small(Gen.int(1, _), 1)) { (c, i) =>
+        val chars = toChunk(List.fill(i)(c))
+        decodeSuccess(consume.oneOf(c).rep, chars)(chars)
       }
     ),
-    testM("repN") {
-      check(genString1, Gen.small(i => Gen.stringBounded(1, i)(Gen.elements(' ')), 1))((str, w) =>
-        decodeSuccess(token(str) ~ consume.oneOf(' ').repN(w.size), toChunk(str + w))(
-          (toChunk(str), toChunk(w.mkString))
+    testM("repN")(
+      check(Gen.anyChar, Gen.small(Gen.int(1, _), 1)) { (c, i) =>
+        val chars = toChunk(List.fill(i)(c))
+        decodeSuccess(consume.oneOf(c).repN(i), chars)(chars)
+      }
+    ),
+    testM("opt string")( //this fails index -1 != 0
+      check(genString1) { str =>
+        decodeSuccess((token(str) ~ token("extra").ignore(Chunk.empty)).option, toChunk(str))(
+          Some((toChunk(str), ()))
+        )
+      }
+    ),
+    suite("opt char")( //index is == 0
+      testM("rep")(
+        check(genString1)(str =>
+          decodeSuccess((token(str) ~ consume.oneOf('e').rep.ignore(Chunk.empty)).option, toChunk(str))(
+            Some((toChunk(str), ()))
+          )
+        )
+      ),
+      testM("repN == 1")( //this fails index -1 != 0
+        check(genString1)(str =>
+          decodeSuccess((token(str) ~ consume.oneOf('e').repN(3).ignore(Chunk.empty)).option, toChunk(str))(
+            Some((toChunk(str), ()))
+          )
         )
       )
-    }
+    )
   )
 }
