@@ -13,7 +13,7 @@ trait CharCodecModule extends CodecModule {
   def tokenAs[A](t: String, v: A): Codec[A] =
     token(t).as(v, Chunk.fromIterable(t))
 
-  def betweenChar(begin: Input, end: Input): Codec[Input] =
+  def charBetween(begin: Input, end: Input): Codec[Input] =
     consume.filter((begin to end).toSet)
 
   def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
@@ -420,8 +420,8 @@ trait CharCodecModule extends CodecModule {
 
     stack.pop() match {
       case null    => Left(DecodeError("bug in our implementation, please report to us", 0))
-      case NoValue => Left(DecodeError("no match", inputIndex))
-      case v       => Right((inputIndex, v))
+      case NoValue => Left(DecodeError("no match", inputIndex + 1))
+      case v       => Right((inputIndex + 1, v))
     }
   }
 }

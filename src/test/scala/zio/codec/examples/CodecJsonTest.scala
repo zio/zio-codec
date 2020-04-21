@@ -35,7 +35,7 @@ object CodecJsonTest {
   val spacing: Codec[Unit] =
     consume.oneOf(' ', '\n', '\r').rep.ignore(Chunk.empty)
 
-  val digit: Codec[Char]             = betweenChar('0', '9')
+  val digit: Codec[Char]             = charBetween('0', '9')
   val sign: Codec[Option[Char]]      = consume.oneOf('-', '+').option
   val fractional: Codec[Chunk[Char]] = (dot, '.') ~> digit.rep
   val exponent: Codec[Chunk[Char]]   = (consume.oneOf('e', 'E') ~ sign, ('E', Some('+'))) ~> digit.rep
@@ -111,7 +111,7 @@ object CodecJsonTest {
     println(dec(Chunk.fromArray("""[ [ 111, 222, 333 ], "ss", true, false, null, -12 ]""".toCharArray)))
     println()
 
-    // Right((372, Obj(List((firstName,Str(John)), (lastName,Str(Smith)), (age,Num(25.0)), (address,Obj(List((streetAddress,Str(21 2nd Street)), (city,Str(New York)), (state,Str(NY)), (postalCode,Num(10021.0))))), (phoneNumbers,Arr(List(Obj(List((type,Str(home)), (number,Str(212 555-1234)))), Obj(List((type,Str(fax)), (number,Str(646 555-4567)))))))))))
+    // Right((373, Obj(List((firstName,Str(John)), (lastName,Str(Smith)), (age,Num(25.0)), (address,Obj(List((streetAddress,Str(21 2nd Street)), (city,Str(New York)), (state,Str(NY)), (postalCode,Num(10021.0))))), (phoneNumbers,Arr(List(Obj(List((type,Str(home)), (number,Str(212 555-1234)))), Obj(List((type,Str(fax)), (number,Str(646 555-4567)))))))))))
     println(dec(value))
 
     val t1: Long = System.nanoTime()
