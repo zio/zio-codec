@@ -5,6 +5,7 @@ import zio.internal.Stack
 
 trait CharCodecModule extends CodecModule {
   type Input = Char
+
   // todo: consumeN
   def token(t: String): Codec[Chunk[Input]] =
     consume.repN(t.length).filter(Set(Chunk.fromIterable(t)))
@@ -12,7 +13,7 @@ trait CharCodecModule extends CodecModule {
   def tokenAs[A](t: String, v: A): Codec[A] =
     token(t).as(v, Chunk.fromIterable(t))
 
-  def betweenChar(begin: Input, end: Input): Codec[Input] =
+  def charBetween(begin: Input, end: Input): Codec[Input] =
     consume.filter((begin to end).toSet)
 
   def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
@@ -80,11 +81,10 @@ trait CharCodecModule extends CodecModule {
                 case Equiv.ForTesting(f) => Array(VM.Construct1(f.asInstanceOf[AnyRef => AnyRef]))
               }
 
-              val lMap  = offset + program.length + 1
               val lBail = offset + program.length + 1 + mapProgram.length
 
               program ++ Array(
-                VM.JumpEq(lBail, lMap)
+                VM.ACmpEq(lBail)
               ) ++ mapProgram ++ Array(
                 VM.Return(name)
               )
@@ -97,19 +97,17 @@ trait CharCodecModule extends CodecModule {
                 VM.Push(NoValue)
               )
 
-              val lFilter   = offset + program.length + 1
-              val lMismatch = offset + program.length + 5
-              val lMatch    = offset + program.length + 7
-              val lExit     = offset + program.length + 7
+              val lMatch = offset + program.length + 7
+              val lExit  = offset + program.length + 7
 
               // format: off
               program ++ Array(
-                VM.JumpEq(lExit, lFilter),
+                VM.ACmpEq(lExit),
 
                 VM.Duplicate,                    // filter
-                VM.CheckSet(in.map(_.asInstanceOf[AnyRef])),
-                VM.Push((mod match { case Inside => true; case Outside => false }).asInstanceOf[AnyRef]),
-                VM.JumpEq(lMatch, lMismatch),
+                VM.CheckSet(in.asInstanceOf[Set[Any]]),
+                VM.Push((mod match { case Inside => 1; case Outside => 0 }).asInstanceOf[AnyRef]),
+                VM.ICmpEq(lMatch),
 
                 VM.Pop,                          // mismatch
                 VM.Push(NoValue),
@@ -130,18 +128,16 @@ trait CharCodecModule extends CodecModule {
                 VM.Push(NoValue)
               )
 
-              val lCont1 = offset + programL.length + 1
-              val lCont2 = offset + programL.length + 1 + programR.length + 1
               val lClean = offset + programL.length + 1 + programR.length + 3
               val lExit  = offset + programL.length + 1 + programR.length + 6
 
               // format: off
               programL ++
                 Array(
-                  VM.JumpEq(lExit, lCont1)
+                  VM.ACmpEq(lExit)
                 ) ++ programR ++                 // continue to second codec
                 Array(
-                  VM.JumpEq(lClean, lCont2),
+                  VM.ACmpEq(lClean),
 
                   VM.Construct2(Tuple2.apply),   // continue to construct a tuple
                   VM.Jump(lExit),
@@ -162,13 +158,12 @@ trait CharCodecModule extends CodecModule {
                 VM.Push(NoValue)
               )
 
-              val lSome = offset + program.length + 1
               val lNone = offset + program.length + 4
               val lExit = offset + program.length + 7
 
               // format: off
               program ++ Array(
-                VM.JumpEq(lNone, lSome),
+                VM.ACmpEq(lNone),
 
                 VM.IIndexPop,                    // some
                 VM.Construct1(Some.apply),
@@ -195,20 +190,18 @@ trait CharCodecModule extends CodecModule {
                 VM.Push(NoValue)
               )
 
-              val lAlt     = offset + programL.length + 1
               val lAcceptL = offset + programL.length + 3 + programR.length + 3
-              val lAcceptR = offset + programL.length + 3 + programR.length + 1
               val lExit    = offset + programL.length + 3 + programR.length + 5
 
               // format: off
               programL ++
                 Array(
-                  VM.JumpEq(lAlt, lAcceptL),
+                  VM.ACmpNe(lAcceptL),
                   VM.IIndexStore,                // try another program
                   VM.Pop
                 ) ++ programR ++
                 Array(
-                  VM.JumpEq(lExit, lAcceptR),
+                  VM.ACmpEq(lExit),
                   VM.Construct1(Right.apply),    // accept right
                   VM.Jump(lExit),
                   VM.IIndexPop,                  // accept left
@@ -228,12 +221,11 @@ trait CharCodecModule extends CodecModule {
               )
 
               val lRepeat = offset + 2
-              val lAccum  = offset + program.length + 1
               val lFinish = offset + program.length + 4
 
               // format: off
               program ++ Array(
-                VM.JumpEq(lFinish, lAccum),
+                VM.ACmpEq(lFinish),
 
                 VM.IIndexPop,                    // accumulate
                 VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
@@ -258,15 +250,13 @@ trait CharCodecModule extends CodecModule {
               )
 
               val lRepeat  = offset + 3
-              val lAccum   = offset + program.length + 1
               val lNoValue = offset + program.length + 14
-              val lMore    = offset + program.length + 9
               val lEnough  = offset + program.length + 11
               val lExit    = offset + program.length + 19
 
               // format: off
               program ++ Array(
-                VM.JumpEq(lNoValue, lAccum),
+                VM.ACmpEq(lNoValue),
 
                 VM.IIndexPop,                    // accumulate element
                 VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
@@ -275,7 +265,7 @@ trait CharCodecModule extends CodecModule {
                 VM.IAdd,
                 VM.Duplicate,
                 VM.Push(math.max(1, max).asInstanceOf[AnyRef]), // todo: it's always 1 or more, is it correct?
-                VM.JumpEq(lEnough, lMore),
+                VM.ICmpEq(lEnough),
 
                 VM.LoadRegister0,                // more
                 VM.Jump(lRepeat),
@@ -348,14 +338,20 @@ trait CharCodecModule extends CodecModule {
         case CheckSet(s) =>
           val v1 = stack.pop()
 //          println(s"($inputIndex) " + v1.toString + " in " + s)
-          stack.push(s.contains(v1).asInstanceOf[AnyRef])
+          stack.push((if (s.contains(v1)) 1 else 0).asInstanceOf[AnyRef])
           i += 1
 
         case Jump(to) =>
           i = to
 
-        case JumpEq(ifEqual, otherwise) =>
-          if (stack.pop().eq(stack.pop())) i = ifEqual else i = otherwise
+        case ICmpEq(address) =>
+          if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = address else i += 1
+
+        case ACmpEq(address) =>
+          if (stack.pop().eq(stack.pop())) i = address else i += 1
+
+        case ACmpNe(address) =>
+          if (stack.pop().eq(stack.pop())) i += 1 else i = address
 
         case Construct1(f) =>
           stack.push(f(stack.pop()))
@@ -424,8 +420,8 @@ trait CharCodecModule extends CodecModule {
 
     stack.pop() match {
       case null    => Left(DecodeError("bug in our implementation, please report to us", 0))
-      case NoValue => Left(DecodeError("no match", inputIndex))
-      case v       => Right((inputIndex, v))
+      case NoValue => Left(DecodeError("no match", inputIndex + 1))
+      case v       => Right((inputIndex + 1, v))
     }
   }
 }
