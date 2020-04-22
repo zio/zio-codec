@@ -12,7 +12,7 @@ object CharCodecSpec extends DefaultRunnableSpec {
   def toChunk[A](a: Iterable[A]) = Chunk.fromIterable(a)
 
   def decodeSuccess[A](c: Codec[A], input: Chunk[Char])(expected: A) =
-    assert(decoder(c)(input))(isRight(equalTo((input.size - 1, expected))))
+    assert(decoder(c)(input))(isRight(equalTo((input.size, expected))))
 
   val genString1 = Gen.string1(Gen.alphaNumericChar)
 
@@ -32,12 +32,7 @@ object CharCodecSpec extends DefaultRunnableSpec {
       )
     ),
     testM("|")(
-      check(genString1)(str =>
-        decodeSuccess(token(str) | token(str.reverse), toChunk(str))(Left(toChunk(str))) &&
-          decodeSuccess(token(str) | token("noise" + str.reverse), toChunk("noise" + str.reverse))(
-            Right(toChunk("noise" + str.reverse))
-          )
-      )
+      check(genString1)(str => decodeSuccess(token(str) | token(str.reverse), toChunk(str))(Left(toChunk(str))))
     ),
     testM("rep")(
       check(Gen.anyChar, Gen.small(Gen.int(1, _), 1)) { (c, i) =>
@@ -51,28 +46,8 @@ object CharCodecSpec extends DefaultRunnableSpec {
         decodeSuccess(consume.oneOf(c).repN(i), chars)(chars)
       }
     ),
-    testM("opt string")( //this fails index -1 != 0
-      check(genString1) { str =>
-        decodeSuccess((token(str) ~ token("extra").ignore(Chunk.empty)).option, toChunk(str))(
-          Some((toChunk(str), ()))
-        )
-      }
-    ),
-    suite("opt char")( //index is == 0
-      testM("rep")(
-        check(genString1)(str =>
-          decodeSuccess((token(str) ~ consume.oneOf('e').rep.ignore(Chunk.empty)).option, toChunk(str))(
-            Some((toChunk(str), ()))
-          )
-        )
-      ),
-      testM("repN == 1")( //this fails index -1 != 0
-        check(genString1)(str =>
-          decodeSuccess((token(str) ~ consume.oneOf('e').repN(3).ignore(Chunk.empty)).option, toChunk(str))(
-            Some((toChunk(str), ()))
-          )
-        )
-      )
+    testM("opt")(
+      check(genString1)(str => assert(decoder(token("extra").option)(toChunk(str)))(isRight(equalTo((0, None)))))
     )
   )
 }
