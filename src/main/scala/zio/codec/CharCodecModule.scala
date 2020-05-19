@@ -38,11 +38,11 @@ trait CharCodecModule extends CodecModule {
 
     var labelCount: Int       = 0
     var labels: Map[Int, Int] = Map.empty
-    def newLabel(address: Int): Int = {
-      val label = labelCount
+    def newLabel(address: Int): VM.ALabel = {
+      val number = labelCount
       labels += (labelCount -> address)
       labelCount += 1
-      label
+      VM.ALabel(number, address)
     }
 
     def compile[A0](codec: Codec[A0], offset: Int, chain: Map[AnyRef, (Int, Int)]): Array[CodecVM] = {
@@ -355,16 +355,16 @@ trait CharCodecModule extends CodecModule {
           i += 1
 
         case Jump(label) =>
-          i = labels(label)
+          i = labels(label.num)
 
         case ICmpEq(label) =>
-          if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = labels(label) else i += 1
+          if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = labels(label.num) else i += 1
 
         case ACmpEq(label) =>
-          if (stack.pop().eq(stack.pop())) i = labels(label) else i += 1
+          if (stack.pop().eq(stack.pop())) i = labels(label.num) else i += 1
 
         case ACmpNe(label) =>
-          if (stack.pop().eq(stack.pop())) i += 1 else i = labels(label)
+          if (stack.pop().eq(stack.pop())) i += 1 else i = labels(label.num)
 
         case Construct1(f) =>
           stack.push(f(stack.pop()))
