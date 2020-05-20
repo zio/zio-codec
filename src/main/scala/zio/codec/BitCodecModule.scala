@@ -35,10 +35,10 @@ trait BitCodecModule extends CodecModule {
         case CodecVM.ACmpEq(address) =>
           if (stack.pop().eq(stack.pop())) i = address.address else i += 1
 
-        case CodecVM.Construct1(f) =>
+        case CodecVM.Call1(f) =>
           stack.push(f(stack.pop()))
 
-        case CodecVM.Construct2(f) =>
+        case CodecVM.Call2(f) =>
           stack.push(f(stack.pop(), stack.pop()))
 
         case CodecVM.Fail(err) =>

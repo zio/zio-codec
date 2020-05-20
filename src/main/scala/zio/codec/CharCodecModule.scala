@@ -1,6 +1,7 @@
 package zio.codec
 
 import java.lang.reflect.Method
+import java.util.UUID
 
 import com.github.ghik.silencer.silent
 import org.objectweb.asm.{ ClassWriter, Label, MethodVisitor, Opcodes }
@@ -58,19 +59,19 @@ trait CharCodecModule extends CodecModule {
     var labelCount: Int       = 0
     var labels: Map[Int, Int] = Map.empty
     def newLabel(address: Int): VM.ALabel = {
-      val number = labelCount
+      val idx = labelCount
       labels += (labelCount -> address)
       labelCount += 1
-      VM.ALabel(number, address)
+      VM.ALabel(idx, address)
     }
 
     var setCount: Int                       = 0
     var sets: Array[java.util.HashSet[Any]] = Array()
     def newSet[A0](filter: Codec.Filter[A0]): VM.ASet = {
-      val number = setCount
+      val idx = setCount
       sets = sets :+ filter.hs
       setCount += 1
-      VM.ASet(number, filter.filter.asInstanceOf[Set[Any]])
+      VM.ASet(idx, filter.filter.asInstanceOf[Set[Any]])
     }
 
     def compile[A0](codec: Codec[A0], offset: Int, chain: Map[AnyRef, (Int, Int)]): Array[CodecVM] = {
@@ -107,15 +108,15 @@ trait CharCodecModule extends CodecModule {
               )
 
               val mapProgram: Array[CodecVM] = map.equiv match {
-                case Equiv.Left(_)      => Array(VM.Construct1(_.asInstanceOf[(AnyRef, _)]._1))
-                case Equiv.Right(_)     => Array(VM.Construct1(_.asInstanceOf[(_, AnyRef)]._2))
-                case Equiv.Merge()      => Array(VM.Construct1(_.asInstanceOf[Either[AnyRef, AnyRef]].merge))
+                case Equiv.Left(_)      => Array(VM.Call1(_.asInstanceOf[(AnyRef, _)]._1))
+                case Equiv.Right(_)     => Array(VM.Call1(_.asInstanceOf[(_, AnyRef)]._2))
+                case Equiv.Merge()      => Array(VM.Call1(_.asInstanceOf[Either[AnyRef, AnyRef]].merge))
                 case Equiv.Ignore(_)    => Array(VM.Pop, VM.Push(().asInstanceOf[AnyRef]))
                 case Equiv.As(b, _)     => Array(VM.Pop, VM.Push(b.asInstanceOf[AnyRef]))
-                case Equiv.Chars.String => Array(VM.Construct1(_.asInstanceOf[Chunk[Char]].mkString))
+                case Equiv.Chars.String => Array(VM.Call1(_.asInstanceOf[Chunk[Char]].mkString))
                 case Equiv.Bits.UInt16  => ???
 
-                case Equiv.ForTesting(f) => Array(VM.Construct1(f.asInstanceOf[AnyRef => AnyRef]))
+                case Equiv.ForTesting(f) => Array(VM.Call1(f.asInstanceOf[AnyRef => AnyRef]))
               }
 
               val lBail = newLabel(offset + program.length + 1 + mapProgram.length)
@@ -154,8 +155,10 @@ trait CharCodecModule extends CodecModule {
 
             case Codec.Zip(left, right) =>
               val programL = Array(
-                VM.BeginMethod(name)
-              ) ++ compile(left(), offset + 1, chain1) ++ Array(
+                VM.BeginMethod(name),
+                VM.New(VM.AInstance(UUID.randomUUID(), "scala/Tuple2")),
+                VM.Duplicate
+              ) ++ compile(left(), offset + 3, chain1) ++ Array(
                 VM.Duplicate,
                 VM.Push(NoValue)
               )
@@ -165,21 +168,24 @@ trait CharCodecModule extends CodecModule {
                 VM.Push(NoValue)
               )
 
-              val lClean = newLabel(offset + programL.length + 1 + programR.length + 3)
-              val lExit  = newLabel(offset + programL.length + 1 + programR.length + 6)
+              val lCleanA = newLabel(offset + programL.length + 1 + programR.length + 3)
+              val lCleanL = newLabel(offset + programL.length + 1 + programR.length + 4)
+              val lExit   = newLabel(offset + programL.length + 1 + programR.length + 8)
 
               // format: off
               programL ++
                 Array(
-                  VM.ACmpEq(lExit)
+                  VM.ACmpEq(lCleanL)
                 ) ++ programR ++                 // continue to second codec
                 Array(
-                  VM.ACmpEq(lClean),
-
-                  VM.Construct2(Tuple2.apply),   // continue to construct a tuple
+                  VM.ACmpEq(lCleanA),
+                                                 // continue to construct a tuple
+                  VM.InvokeSpecial2("scala/Tuple2", "<init>", "(Ljava/lang/Object;Ljava/lang/Object;)V", Tuple2.apply),
                   VM.Jump(lExit),
 
-                  VM.Pop,                        // clean up
+                  VM.Pop,                        // clean up all
+                  VM.Pop,                        // clean up left
+                  VM.Pop,
                   VM.Pop,
                   VM.Push(NoValue),
                   VM.Return(name)                // exit
@@ -189,24 +195,28 @@ trait CharCodecModule extends CodecModule {
             case Codec.Opt(value) =>
               val program = Array(
                 VM.BeginMethod(name),
-                VM.IIndexPush
-              ) ++ compile(value(), offset + 2, chain1) ++ Array(
+                VM.IIndexPush,
+                VM.New(VM.AInstance(UUID.randomUUID(), "scala/Some")),
+                VM.Duplicate
+              ) ++ compile(value(), offset + 4, chain1) ++ Array(
                 VM.Duplicate,
                 VM.Push(NoValue)
               )
 
               val lNone = newLabel(offset + program.length + 4)
-              val lExit = newLabel(offset + program.length + 7)
+              val lExit = newLabel(offset + program.length + 9)
 
               // format: off
               program ++ Array(
                 VM.ACmpEq(lNone),
 
                 VM.IIndexPop,                    // some
-                VM.Construct1(Some.apply),
+                VM.InvokeSpecial1("scala/Some", "<init>", "(Ljava/lang/Object;)V", Some.apply),
                 VM.Jump(lExit),
 
                 VM.IIndexStore,                  // none
+                VM.Pop,
+                VM.Pop,
                 VM.Pop,
                 VM.Push(None),
                 VM.Return(name)                  // exit
@@ -239,10 +249,10 @@ trait CharCodecModule extends CodecModule {
                 ) ++ programR ++
                 Array(
                   VM.ACmpEq(lExit),
-                  VM.Construct1(Right.apply),    // accept right
+                  VM.Call1(Right.apply),         // accept right
                   VM.Jump(lExit),
                   VM.IIndexPop,                  // accept left
-                  VM.Construct1(Left.apply),
+                  VM.Call1(Left.apply),
                   VM.Return(name)                // exit
                 )
               // format: on
@@ -265,7 +275,7 @@ trait CharCodecModule extends CodecModule {
                 VM.ACmpEq(lFinish),
 
                 VM.IIndexPop,                    // accumulate
-                VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
+                VM.Call2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
                 VM.Jump(lRepeat),
 
                 VM.IIndexStore,                  // finish
@@ -296,7 +306,7 @@ trait CharCodecModule extends CodecModule {
                 VM.ACmpEq(lNoValue),
 
                 VM.IIndexPop,                    // accumulate element
-                VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
+                VM.Call2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
                 VM.StoreRegister0,
                 VM.PushInt(1),
                 VM.IAdd,
@@ -348,6 +358,14 @@ trait CharCodecModule extends CodecModule {
     val stack: Stack[AnyRef] = Stack()
     var i: Int               = 0
 
+    var created: Map[UUID, AnyRef] = Map.empty
+
+    def stackPop(): AnyRef =
+      stack.pop() match {
+        case AInstance(id, _) => created(id)
+        case value            => value
+      }
+
     val inputStack: Stack[AnyRef] = Stack()
     var inputIndex: Int           = -1
     val inputLength: Int          = input.length
@@ -377,7 +395,7 @@ trait CharCodecModule extends CodecModule {
           ???
 
         case CheckSet(s) =>
-          val v1 = stack.pop()
+          val v1 = stackPop()
 //          println(s"($inputIndex) " + v1.toString + " in " + s)
           stack.push((if (s.set.contains(v1)) 1 else 0).asInstanceOf[AnyRef])
           i += 1
@@ -389,18 +407,23 @@ trait CharCodecModule extends CodecModule {
           if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = address else i += 1
 
         case ACmpEq(ALabel(_, address)) =>
-          if (stack.pop().eq(stack.pop())) i = address else i += 1
+          if (stackPop().eq(stackPop())) i = address else i += 1
 
         case ACmpNe(ALabel(_, address)) =>
-          if (stack.pop().eq(stack.pop())) i += 1 else i = address
+          if (stackPop().eq(stackPop())) i += 1 else i = address
 
-        case Construct1(f) =>
-          stack.push(f(stack.pop()))
+        case New(ins @ AInstance(id, _)) =>
+          created += (id -> null.asInstanceOf[AnyRef])
+          stack.push(ins)
           i += 1
 
-        case Construct2(f) =>
-          val arg2 = stack.pop()
-          val arg1 = stack.pop()
+        case Call1(f) =>
+          stack.push(f(stackPop()))
+          i += 1
+
+        case Call2(f) =>
+          val arg2 = stackPop()
+          val arg1 = stackPop()
           stack.push(f(arg1, arg2))
           i += 1
 
@@ -420,6 +443,19 @@ trait CharCodecModule extends CodecModule {
           frameStack.push(i.asInstanceOf[AnyRef])
           i = address
 
+        case InvokeSpecial1(_, _, _, f) =>
+          val arg1             = stackPop()
+          val AInstance(id, _) = stack.pop()
+          created += (id -> f(arg1))
+          i += 1
+
+        case InvokeSpecial2(_, _, _, f) =>
+          val arg2             = stackPop()
+          val arg1             = stackPop()
+          val AInstance(id, _) = stack.pop()
+          created += (id -> f(arg1, arg2))
+          i += 1
+
         case Noop =>
           i += 1
 
@@ -432,7 +468,7 @@ trait CharCodecModule extends CodecModule {
           i += 1
 
         case StoreRegister0 =>
-          r0 = stack.pop()
+          r0 = stackPop()
           i += 1
 
         case LoadRegister0 =>
@@ -459,7 +495,7 @@ trait CharCodecModule extends CodecModule {
 //      println(instr.toString.padTo(20, ' ') + ": " + stack.peekOrElse("EMPTY"))
     }
 
-    stack.pop() match {
+    stackPop() match {
       case null    => Left(DecodeError("bug in our implementation, please report to us", 0))
       case NoValue => Left(DecodeError("no match", inputIndex + 1))
       case v       => Right((inputIndex + 1, v))
@@ -558,29 +594,39 @@ trait CharCodecModule extends CodecModule {
               case i                              => m.visitLdcInsn(i)
             }
 
-          case CheckSet(ASet(num, _)) =>
+          case CheckSet(ASet(idx, _)) =>
             m.visitVarInsn(ALOAD, 0)
-            m.visitLdcInsn(num + 1) // todo: should be from another array
+            m.visitLdcInsn(idx + 1) // todo: should be from another array
             m.visitInsn(AALOAD)
             m.visitTypeInsn(CHECKCAST, "java/util/HashSet");
 
             m.visitInsn(SWAP)
             m.visitMethodInsn(INVOKEVIRTUAL, "java/util/HashSet", "contains", "(Ljava/lang/Object;)Z", false);
 
-          case Jump(ALabel(num, _)) =>
-            m.visitJumpInsn(GOTO, labels(num)._1)
+          case Jump(ALabel(idx, _)) =>
+            m.visitJumpInsn(GOTO, labels(idx)._1)
 
-          case ICmpEq(ALabel(num, _)) =>
-            m.visitJumpInsn(IF_ICMPEQ, labels(num)._1)
+          case ICmpEq(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ICMPEQ, labels(idx)._1)
 
-          case ACmpEq(ALabel(num, _)) =>
-            m.visitJumpInsn(IF_ACMPEQ, labels(num)._1)
+          case ACmpEq(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ACMPEQ, labels(idx)._1)
 
-          case ACmpNe(ALabel(num, _)) =>
-            m.visitJumpInsn(IF_ACMPNE, labels(num)._1)
+          case ACmpNe(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ACMPNE, labels(idx)._1)
 
-          case Construct1(f)               => ???
-          case Construct2(f)               => ???
+          case Call1(f) => ???
+          case Call2(f) => ???
+
+          case New(AInstance(_, owner)) =>
+            m.visitTypeInsn(NEW, owner)
+
+          case InvokeSpecial1(owner, name, args, _) =>
+            m.visitMethodInsn(INVOKESPECIAL, owner, name, args, false)
+
+          case InvokeSpecial2(owner, name, args, _) =>
+            m.visitMethodInsn(INVOKESPECIAL, owner, name, args, false)
+
           case Fail(err)                   => ???
           case BeginMethod(name)           => ???
           case Return(name)                => ???
