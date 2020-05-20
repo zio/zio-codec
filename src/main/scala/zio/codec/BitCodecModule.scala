@@ -30,7 +30,7 @@ trait BitCodecModule extends CodecModule {
 //          if (inputIndex + min < input.length
 
         case CodecVM.CheckSet(s) =>
-          stack.push(s.contains(stack.pop()).asInstanceOf[AnyRef])
+          stack.push(s.set.contains(stack.pop()).asInstanceOf[AnyRef])
 
         case CodecVM.ACmpEq(address) =>
           if (stack.pop().eq(stack.pop())) i = address.address else i += 1

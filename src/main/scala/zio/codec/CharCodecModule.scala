@@ -1,5 +1,9 @@
 package zio.codec
 
+import java.lang.reflect.Method
+
+import com.github.ghik.silencer.silent
+import org.objectweb.asm.{ ClassWriter, Label, MethodVisitor, Opcodes }
 import zio.Chunk
 import zio.internal.Stack
 
@@ -17,18 +21,33 @@ trait CharCodecModule extends CodecModule {
     consume.filter((begin to end).toSet)
 
   def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
-    val (program, labels) = compileCodec(codec)
+    val (program, _, _) = compileCodec(codec)
 //    println(program.zipWithIndex.map { case (o, i) => i.toString.reverse.padTo(3, '0').reverse + ": " + o }.mkString("", "\n", "\n"))
-    interpret(_, labels, program).asInstanceOf[Either[DecodeError, (Int, A)]]
+    interpret(_, program).asInstanceOf[Either[DecodeError, (Int, A)]]
   }
 
   def encoder[A](codec: Codec[A]): A => Either[EncodeError, Chunk[Input]] = ???
 
   def printer[A](codec: Codec[A]): List[String] = ???
 
+  // todo: rename functions, fix signature
+  def decoder2[A](codec: Codec[A]): Chunk[Input] => (Int, A) = {
+    val (program, labels, lookups) = compileCodec(codec)
+    println(program.zipWithIndex.map { case (o, i) => i.toString.reverse.padTo(3, '0').reverse + ": " + o }
+      .mkString("", "\n", "\n"))
+
+    val (name, bytes) = compileCodecVM(program, labels, lookups)
+    val method        = new ByteClassLoader().load(name, bytes)
+
+    println(method)
+    println()
+
+    s => (123, method.invoke(null, Array(NoValue) ++ lookups, s.toArray).asInstanceOf[A])
+  }
+
   private case object NoValue
 
-  private def compileCodec[A](codec: Codec[A]): (Array[CodecVM], Map[Int, Int]) = {
+  private def compileCodec[A](codec: Codec[A]): (Array[CodecVM], Map[Int, Int], Array[java.util.HashSet[Any]]) = {
     import Codec.FilterMode._
 
     val VM = CodecVM
@@ -43,6 +62,15 @@ trait CharCodecModule extends CodecModule {
       labels += (labelCount -> address)
       labelCount += 1
       VM.ALabel(number, address)
+    }
+
+    var setCount: Int                       = 0
+    var sets: Array[java.util.HashSet[Any]] = Array()
+    def newSet[A0](filter: Codec.Filter[A0]): VM.ASet = {
+      val number = setCount
+      sets = sets :+ filter.hs
+      setCount += 1
+      VM.ASet(number, filter.filter.asInstanceOf[Set[Any]])
     }
 
     def compile[A0](codec: Codec[A0], offset: Int, chain: Map[AnyRef, (Int, Int)]): Array[CodecVM] = {
@@ -98,7 +126,7 @@ trait CharCodecModule extends CodecModule {
                 VM.Return(name)
               )
 
-            case Codec.Filter(value, in, mod) =>
+            case filter @ Codec.Filter(value, _, mod) =>
               val program = Array(
                 VM.BeginMethod(name)
               ) ++ compile(value(), offset + 1, chain1) ++ Array(
@@ -114,8 +142,8 @@ trait CharCodecModule extends CodecModule {
                 VM.ACmpEq(lExit),
 
                 VM.Duplicate,                    // filter
-                VM.CheckSet(in.asInstanceOf[Set[Any]]),
-                VM.Push((mod match { case Inside => 1; case Outside => 0 }).asInstanceOf[AnyRef]),
+                VM.CheckSet(newSet(filter)),
+                VM.PushInt(mod match { case Inside => 1; case Outside => 0 }),
                 VM.ICmpEq(lMatch),
 
                 VM.Pop,                          // mismatch
@@ -250,7 +278,7 @@ trait CharCodecModule extends CodecModule {
             case Codec.Rep(value, Some(min), Some(max)) if min == max =>
               val program = Array(
                 VM.BeginMethod(name),
-                VM.Push(0.asInstanceOf[AnyRef]),
+                VM.PushInt(0),
                 VM.Push(Chunk.empty),
                 VM.IIndexPush // repeat
               ) ++ compile(value(), offset + 4, chain1) ++ Array(
@@ -270,10 +298,10 @@ trait CharCodecModule extends CodecModule {
                 VM.IIndexPop,                    // accumulate element
                 VM.Construct2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
                 VM.StoreRegister0,
-                VM.Push(1.asInstanceOf[AnyRef]),
+                VM.PushInt(1),
                 VM.IAdd,
                 VM.Duplicate,
-                VM.Push(math.max(1, max).asInstanceOf[AnyRef]), // todo: it's always 1 or more, is it correct?
+                VM.PushInt(math.max(1, max)), // todo: it's always 1 or more, is it correct?
                 VM.ICmpEq(lEnough),
 
                 VM.LoadRegister0,                // more
@@ -311,14 +339,10 @@ trait CharCodecModule extends CodecModule {
       case i                        => i
     }
 
-    (ret1, labels)
+    (ret1, labels, sets)
   }
 
-  private def interpret(
-    input: Chunk[Input],
-    labels: Map[Int, Int],
-    program: Array[CodecVM]
-  ): Either[DecodeError, (Int, Any)] = {
+  private def interpret(input: Chunk[Input], program: Array[CodecVM]): Either[DecodeError, (Int, Any)] = {
     import CodecVM._
 
     val stack: Stack[AnyRef] = Stack()
@@ -339,6 +363,10 @@ trait CharCodecModule extends CodecModule {
           stack.push(value)
           i += 1
 
+        case PushInt(int) =>
+          stack.push(int.asInstanceOf[AnyRef])
+          i += 1
+
         case Read(None, None) =>
           inputIndex += 1
           if (inputIndex < inputLength) stack.push(input(inputIndex).asInstanceOf[AnyRef])
@@ -351,20 +379,20 @@ trait CharCodecModule extends CodecModule {
         case CheckSet(s) =>
           val v1 = stack.pop()
 //          println(s"($inputIndex) " + v1.toString + " in " + s)
-          stack.push((if (s.contains(v1)) 1 else 0).asInstanceOf[AnyRef])
+          stack.push((if (s.set.contains(v1)) 1 else 0).asInstanceOf[AnyRef])
           i += 1
 
-        case Jump(label) =>
-          i = labels(label.num)
+        case Jump(ALabel(_, address)) =>
+          i = address
 
-        case ICmpEq(label) =>
-          if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = labels(label.num) else i += 1
+        case ICmpEq(ALabel(_, address)) =>
+          if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = address else i += 1
 
-        case ACmpEq(label) =>
-          if (stack.pop().eq(stack.pop())) i = labels(label.num) else i += 1
+        case ACmpEq(ALabel(_, address)) =>
+          if (stack.pop().eq(stack.pop())) i = address else i += 1
 
-        case ACmpNe(label) =>
-          if (stack.pop().eq(stack.pop())) i += 1 else i = labels(label.num)
+        case ACmpNe(ALabel(_, address)) =>
+          if (stack.pop().eq(stack.pop())) i += 1 else i = address
 
         case Construct1(f) =>
           stack.push(f(stack.pop()))
@@ -436,5 +464,150 @@ trait CharCodecModule extends CodecModule {
       case NoValue => Left(DecodeError("no match", inputIndex + 1))
       case v       => Right((inputIndex + 1, v))
     }
+  }
+
+  private class ByteClassLoader extends ClassLoader {
+    def load(name: String, bytes: Array[Byte]): Method = {
+      val c = defineClass(name, bytes, 0, bytes.length)
+      val m = c.getMethods.head
+      m
+    }
+  }
+
+  @silent
+  private def compileCodecVM(
+    instructions: Array[CodecVM],
+    addresses: Map[Int, Int],
+    lookups: Array[java.util.HashSet[Any]]
+  ): (String, Array[Byte]) = {
+    import CodecVM._
+    import Opcodes._
+
+    val labels: Map[Int, (Label, Int)] =
+      addresses.map { case (key, address) => (key, (new Label(), address)) }
+    val labelAddresses: Map[Int, List[Label]] =
+      labels.groupBy(_._2._2).map { case (address, list) => (address, list.toList.map(_._2._1)) }
+
+    val c: ClassWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES)
+    val name: String   = "MyCodec"
+
+    c.visit(V1_8, ACC_PUBLIC | ACC_SUPER, name, null, "java/lang/Object", null)
+
+    val m: MethodVisitor =
+      c.visitMethod(ACC_PUBLIC | ACC_STATIC, "run", "([Ljava/lang/Object;[C)Ljava/lang/Object;", null, null)
+    m.visitCode()
+
+    // var0: Array[Object] - NoValue followed by inclusion Sets
+    // var1: Array[char]   - input
+    // var2: int           - input index
+    m.visitInsn(ICONST_M1)
+    m.visitVarInsn(ISTORE, 2)
+
+    instructions.zipWithIndex.foreach {
+      case (ins, address) =>
+        labelAddresses
+          .get(address)
+          .foreach(
+            _.foreach(
+              m.visitLabel
+            )
+          )
+
+        ins match {
+          case Read(None, None) =>
+            val labelNoInput = new Label()
+            val labelDone    = new Label()
+
+            m.visitIincInsn(2, 1)
+
+            m.visitVarInsn(ILOAD, 2)
+            m.visitVarInsn(ALOAD, 1)
+            m.visitInsn(ARRAYLENGTH);
+            m.visitJumpInsn(IF_ICMPGE, labelNoInput)
+
+            m.visitVarInsn(ALOAD, 1)
+            m.visitVarInsn(ILOAD, 2)
+            m.visitInsn(CALOAD)
+            m.visitMethodInsn(INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;", false)
+            m.visitJumpInsn(GOTO, labelDone)
+
+            m.visitLabel(labelNoInput)
+            m.visitVarInsn(ALOAD, 0)
+            m.visitInsn(ICONST_0)
+            m.visitInsn(AALOAD)
+
+            m.visitLabel(labelDone)
+
+          case Read(_, _) =>
+            ???
+
+          case Push(NoValue) =>
+            m.visitVarInsn(ALOAD, 0)
+            m.visitInsn(ICONST_0)
+            m.visitInsn(AALOAD)
+
+          case Push(value) =>
+            ???
+
+          case PushInt(int) =>
+            int match {
+              case 0                              => m.visitInsn(ICONST_0)
+              case 1                              => m.visitInsn(ICONST_1)
+              case b if -128 <= b && b <= 127     => m.visitIntInsn(BIPUSH, b)
+              case s if -32768 <= s && s <= 32767 => m.visitIntInsn(SIPUSH, s)
+              case i                              => m.visitLdcInsn(i)
+            }
+
+          case CheckSet(ASet(num, _)) =>
+            m.visitVarInsn(ALOAD, 0)
+            m.visitLdcInsn(num + 1) // todo: should be from another array
+            m.visitInsn(AALOAD)
+            m.visitTypeInsn(CHECKCAST, "java/util/HashSet");
+
+            m.visitInsn(SWAP)
+            m.visitMethodInsn(INVOKEVIRTUAL, "java/util/HashSet", "contains", "(Ljava/lang/Object;)Z", false);
+
+          case Jump(ALabel(num, _)) =>
+            m.visitJumpInsn(GOTO, labels(num)._1)
+
+          case ICmpEq(ALabel(num, _)) =>
+            m.visitJumpInsn(IF_ICMPEQ, labels(num)._1)
+
+          case ACmpEq(ALabel(num, _)) =>
+            m.visitJumpInsn(IF_ACMPEQ, labels(num)._1)
+
+          case ACmpNe(ALabel(num, _)) =>
+            m.visitJumpInsn(IF_ACMPNE, labels(num)._1)
+
+          case Construct1(f)               => ???
+          case Construct2(f)               => ???
+          case Fail(err)                   => ???
+          case BeginMethod(name)           => ???
+          case Return(name)                => ???
+          case InvokeStatic(name, address) => ???
+
+          case Noop =>
+            m.visitInsn(NOP)
+
+          case Pop =>
+            m.visitInsn(POP)
+
+          case Duplicate =>
+            m.visitInsn(DUP)
+
+          case StoreRegister0 => ???
+          case LoadRegister0  => ???
+          case IAdd           => ???
+          case IIndexPush     => ???
+          case IIndexPop      => ???
+          case IIndexStore    => ???
+        }
+    }
+
+    m.visitInsn(ARETURN)
+    m.visitMaxs(0, 0)
+    m.visitEnd()
+
+    (name, c.toByteArray)
   }
 }

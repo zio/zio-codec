@@ -41,9 +41,10 @@ lazy val codec =
     .settings(buildInfoSettings("zio.codec"))
     .settings(
       libraryDependencies ++= Seq(
-        "dev.zio" %% "zio"          % zioVersion,
-        "dev.zio" %% "zio-test"     % zioVersion % Test,
-        "dev.zio" %% "zio-test-sbt" % zioVersion % Test
+        "org.ow2.asm" % "asm"           % "8.0.1",
+        "dev.zio"     %% "zio"          % zioVersion,
+        "dev.zio"     %% "zio-test"     % zioVersion % Test,
+        "dev.zio"     %% "zio-test-sbt" % zioVersion % Test
       ),
       testFrameworks := Seq(new TestFramework("zio.test.sbt.ZTestFramework"))
     )

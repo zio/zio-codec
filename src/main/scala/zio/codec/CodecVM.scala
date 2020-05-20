@@ -4,10 +4,12 @@ sealed trait CodecVM
 
 object CodecVM {
   private[zio] final case class ALabel(num: Int, address: Int)
+  private[zio] final case class ASet(num: Int, set: Set[Any])
 
   private[zio] final case class Read(min: Option[Int], max: Option[Int])  extends CodecVM // read from input, push to stack
   private[zio] final case class Push(value: AnyRef)                       extends CodecVM // push value
-  private[zio] final case class CheckSet(s: Set[Any])                     extends CodecVM // pot 1, test value is in set, push the result as boolean on the stack
+  private[zio] final case class PushInt(value: Int)                       extends CodecVM // push int value
+  private[zio] final case class CheckSet(s: ASet)                         extends CodecVM // pop 1, test value is in set, push the result as boolean on the stack
   private[zio] final case class Jump(label: ALabel)                       extends CodecVM // unconditional jump to new address
   private[zio] final case class ICmpEq(label: ALabel)                     extends CodecVM // pop 2 integers and jump to new address if they are equal
   private[zio] final case class ACmpEq(label: ALabel)                     extends CodecVM // pop 2 references and jump to new address if they are equal
