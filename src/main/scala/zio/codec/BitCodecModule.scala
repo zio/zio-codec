@@ -33,7 +33,7 @@ trait BitCodecModule extends CodecModule {
           stack.push(s.contains(stack.pop()).asInstanceOf[AnyRef])
 
         case CodecVM.ACmpEq(address) =>
-          if (stack.pop().eq(stack.pop())) i = address else i += 1
+          if (stack.pop().eq(stack.pop())) i = address.address else i += 1
 
         case CodecVM.Construct1(f) =>
           stack.push(f(stack.pop()))
