@@ -1,5 +1,6 @@
 package zio.codec
 
+import com.github.ghik.silencer.silent
 import zio.Chunk
 
 trait CodecModule {
@@ -72,7 +73,7 @@ trait CodecModule {
     private[zio]       case object Consume                                                           extends Codec[Input]
     private[zio] sealed case class Map[A, B](equiv: Equiv[A, B], value: () => Codec[A])              extends Codec[B]
     private[zio] sealed case class Filter[A](value: () => Codec[A], filter: Set[A], mod: FilterMode) extends Codec[A]
-                                   { val hs: java.util.HashSet[Any] = new java.util.HashSet[Any](filter.asJava) }
+                                   { @silent val hs: java.util.HashSet[Any] = new java.util.HashSet[Any](filter.asJava) }
     private[zio] sealed case class Zip[A, B](left: () => Codec[A], right: () => Codec[B])            extends Codec[(A, B)]
     private[zio] sealed case class Opt[A](value: () => Codec[A])                                     extends Codec[Option[A]]
     private[zio] sealed case class Alt[A, B](left: () => Codec[A], right: () => Codec[B])            extends Codec[Either[A, B]]

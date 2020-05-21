@@ -26,7 +26,7 @@ trait BitCodecModule extends CodecModule {
         case CodecVM.Push(value) =>
           stack.push(value)
 
-        case CodecVM.Read(min, max) =>
+        case CodecVM.InputRead(min, max) =>
 //          if (inputIndex + min < input.length
 
         case CodecVM.CheckSet(s) =>

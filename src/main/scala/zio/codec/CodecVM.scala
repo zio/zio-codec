@@ -10,7 +10,11 @@ object CodecVM {
   private[zio] final case class ASet(idx: Int, set: Set[Any])
   private[zio] final case class AInstance(id: UUID, owner: String)
 
-  private[zio] final case class Read(min: Option[Int], max: Option[Int])  extends CodecVM // read from input, push to stack
+  private[zio] final case class  InputRead(min: Option[Int], max: Option[Int]) extends CodecVM // read from input, push to stack
+  private[zio] final case object InputIdxPush                                  extends CodecVM // push read index value to stack
+  private[zio] final case object InputIdxPop                                   extends CodecVM // pop read index value from stack
+  private[zio] final case object InputIdxPopSet                                extends CodecVM // pop read index value from stack and assign to read index
+
   private[zio] final case class Push(value: AnyRef)                       extends CodecVM // push value
   private[zio] final case class PushInt(value: Int)                       extends CodecVM // push int value
   private[zio] final case class CheckSet(set: ASet)                       extends CodecVM // pop 1, test value is in set, push the result as boolean on the stack
@@ -30,11 +34,9 @@ object CodecVM {
   private[zio] final case object Noop                                     extends CodecVM // do nothing
   private[zio] final case object Pop                                      extends CodecVM // pop 1 thing
   private[zio] final case object Duplicate                                extends CodecVM // duplicate stack head
+  private[zio] final case object Swap                                     extends CodecVM // swap 2 operands at the top of the stack
   private[zio] final case object StoreRegister0                           extends CodecVM // pop 1 thing from stack and store in var 0
   private[zio] final case object LoadRegister0                            extends CodecVM // push var 0
   private[zio] final case object IAdd                                     extends CodecVM // pop 2 integers, add, push result
-  private[zio] final case object IIndexPush                               extends CodecVM // push read index to stack
-  private[zio] final case object IIndexPop                                extends CodecVM // pop read index from stack
-  private[zio] final case object IIndexStore                              extends CodecVM // pop read index from stack and assign to read index
   // format: on
 }
