@@ -39,16 +39,18 @@ trait CharCodecModule extends CodecModule {
     println(program.zipWithIndex.map { case (o, i) => i.toString.reverse.padTo(3, '0').reverse + ": " + o }
       .mkString("", "\n", "\n"))
 
-    val (name, bytes) = compileCodecVM(program, labels, values, lookups)
+    val (name, bytes) = compileCodecVM(program, labels)
     val method        = new ByteClassLoader().load(name, bytes)
 
+    println(bytes.length)
     println(method)
     println()
 
-    s => (123, method.invoke(null, values, lookups, s.toArray).asInstanceOf[A])
+    s => (123, method.invoke(null, NoValue +: values, lookups, s.toArray).asInstanceOf[A])
   }
 
   private case object NoValue
+
   private case class CodecCompilationResult(
     program: Array[CodecVM],
     addresses: Map[Int, Int],
@@ -82,15 +84,13 @@ trait CharCodecModule extends CodecModule {
       VM.ASet(idx, filter.filter.asInstanceOf[Set[Any]])
     }
 
-    val v0                    = VM.AValue(0, NoValue)
     val v1                    = VM.AValue(1, BoxedUnit.UNIT)
     val v2                    = VM.AValue(2, None)
     val v3                    = VM.AValue(3, Chunk.empty)
     var valueCount: Int       = 4
-    var values: Array[AnyRef] = Array(NoValue, BoxedUnit.UNIT, None, Chunk.empty)
+    var values: Array[AnyRef] = Array(BoxedUnit.UNIT, None, Chunk.empty)
     def newValue(value: AnyRef): VM.AValue =
       value match {
-        case NoValue        => v0
         case BoxedUnit.UNIT => v1
         case None           => v2
         case Chunk.empty    => v3
@@ -131,7 +131,7 @@ trait CharCodecModule extends CodecModule {
                 VM.BeginMethod(name)
               ) ++ compile(map.value(), offset + 1, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val mapProgram: Array[CodecVM] = map.equiv match {
@@ -159,7 +159,7 @@ trait CharCodecModule extends CodecModule {
                 VM.BeginMethod(name)
               ) ++ compile(value(), offset + 1, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val lMatch = newLabel(offset + program.length + 7)
@@ -175,7 +175,7 @@ trait CharCodecModule extends CodecModule {
                 VM.ICmpEq(lMatch),
 
                 VM.Pop,                          // mismatch
-                VM.Push(newValue(NoValue)),
+                VM.PushNoValue,
                 VM.Return(name)                  // match, exit
               )
               // format: on
@@ -187,12 +187,12 @@ trait CharCodecModule extends CodecModule {
                 VM.Duplicate
               ) ++ compile(left(), offset + 3, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val programR = compile(right(), offset + programL.length + 1, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val lCleanA = newLabel(offset + programL.length + 1 + programR.length + 3)
@@ -214,7 +214,7 @@ trait CharCodecModule extends CodecModule {
                   VM.Pop,                        // clean up left
                   VM.Pop,
                   VM.Pop,
-                  VM.Push(newValue(NoValue)),
+                  VM.PushNoValue,
                   VM.Return(name)                // exit
                 )
               // format: on
@@ -222,12 +222,12 @@ trait CharCodecModule extends CodecModule {
             case Codec.Opt(value) =>
               val program = Array(
                 VM.BeginMethod(name),
-                VM.InputIdxPush,
+                VM.InputIdxLoad,
                 VM.New(VM.ANew(UUID.randomUUID(), "scala/Some")),
                 VM.Duplicate
               ) ++ compile(value(), offset + 4, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val lNone = newLabel(offset + program.length + 5)
@@ -245,7 +245,7 @@ trait CharCodecModule extends CodecModule {
                 VM.Pop,                          // none
                 VM.Pop,
                 VM.Pop,
-                VM.InputIdxPopSet,
+                VM.InputIdxStore,
                 VM.Push(newValue(None)),
                 VM.Return(name)                  // exit
               )
@@ -254,34 +254,43 @@ trait CharCodecModule extends CodecModule {
             case Codec.Alt(left, right) =>
               val programL = Array(
                 VM.BeginMethod(name),
-                VM.InputIdxPush
+                VM.InputIdxLoad
               ) ++ compile(left(), offset + 2, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val programR = compile(right(), offset + programL.length + 3, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
-              val lAcceptL = newLabel(offset + programL.length + 3 + programR.length + 3)
-              val lExit    = newLabel(offset + programL.length + 3 + programR.length + 6)
+              val lAcceptL = newLabel(offset + programL.length + 3 + programR.length + 7)
+              val lExit    = newLabel(offset + programL.length + 3 + programR.length + 13)
 
               // format: off
               programL ++
                 Array(
                   VM.ACmpNe(lAcceptL),
                   VM.Pop,                        // try another program
-                  VM.InputIdxPopSet
+                  VM.InputIdxStore
                 ) ++ programR ++
                 Array(
                   VM.ACmpEq(lExit),
-                  VM.Call1(Right.apply),         // accept right
+
+                  VM.StoreRegister0,             // accept right
+                  VM.New(VM.ANew(UUID.randomUUID(), "scala/util/Right")),
+                  VM.Duplicate,
+                  VM.LoadRegister0,
+                  VM.InvokeSpecial1("scala/util/Right", "<init>", "(Ljava/lang/Object;)V", scala.util.Right.apply),
                   VM.Jump(lExit),
-                  VM.Call1(Left.apply),          // accept left
-                  VM.Swap,
+
+                  VM.StoreRegister0,             // accept left
                   VM.InputIdxPop,
+                  VM.New(VM.ANew(UUID.randomUUID(), "scala/util/Left")),
+                  VM.Duplicate,
+                  VM.LoadRegister0,
+                  VM.InvokeSpecial1("scala/util/Left", "<init>", "(Ljava/lang/Object;)V", scala.util.Left.apply),
                   VM.Return(name)                // exit
                 )
               // format: on
@@ -290,10 +299,10 @@ trait CharCodecModule extends CodecModule {
               val program = Array(
                 VM.BeginMethod(name),
                 VM.Push(newValue(Chunk.empty)),
-                VM.InputIdxPush // repeat
+                VM.InputIdxLoad // repeat
               ) ++ compile(value(), offset + 3, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val lRepeat = newLabel(offset + 2)
@@ -309,7 +318,7 @@ trait CharCodecModule extends CodecModule {
                 VM.Jump(lRepeat),
 
                 VM.Pop,                          // finish
-                VM.InputIdxPopSet,
+                VM.InputIdxStore,
                 VM.Return(name)
               )
               // format: on
@@ -320,10 +329,10 @@ trait CharCodecModule extends CodecModule {
                 VM.BeginMethod(name),
                 VM.PushInt(0),
                 VM.Push(newValue(Chunk.empty)),
-                VM.InputIdxPush // repeat
+                VM.InputIdxLoad // repeat
               ) ++ compile(value(), offset + 4, chain1) ++ Array(
                 VM.Duplicate,
-                VM.Push(newValue(NoValue))
+                VM.PushNoValue
               )
 
               val lRepeat  = newLabel(offset + 3)
@@ -353,10 +362,10 @@ trait CharCodecModule extends CodecModule {
                 VM.Jump(lExit),
 
                 VM.Pop,                          // no more elements
-                VM.InputIdxPopSet,
+                VM.InputIdxStore,
                 VM.Pop,
                 VM.Pop,
-                VM.Push(newValue(NoValue)),
+                VM.PushNoValue,
                 VM.Return(name)                  // exit
               )
               // format: on
@@ -416,7 +425,7 @@ trait CharCodecModule extends CodecModule {
         case InputRead(_, _) =>
           ???
 
-        case InputIdxPush =>
+        case InputIdxLoad =>
           stack.push(inputIndex.asInstanceOf[AnyRef])
           i += 1
 
@@ -424,7 +433,7 @@ trait CharCodecModule extends CodecModule {
           stack.pop()
           i += 1
 
-        case InputIdxPopSet =>
+        case InputIdxStore =>
           inputIndex = stack.pop().asInstanceOf[Int]
           i += 1
 
@@ -434,6 +443,10 @@ trait CharCodecModule extends CodecModule {
 
         case PushInt(int) =>
           stack.push(int.asInstanceOf[AnyRef])
+          i += 1
+
+        case PushNoValue =>
+          stack.push(NoValue)
           i += 1
 
         case CheckSet(s) =>
@@ -548,12 +561,7 @@ trait CharCodecModule extends CodecModule {
   }
 
   @silent
-  private def compileCodecVM(
-    instructions: Array[CodecVM],
-    addresses: Map[Int, Int],
-    values: Array[AnyRef],
-    lookups: Array[java.util.HashSet[Any]]
-  ): (String, Array[Byte]) = {
+  private def compileCodecVM(instructions: Array[CodecVM], addresses: Map[Int, Int]): (String, Array[Byte]) = {
     import CodecVM._
     import Opcodes._
 
@@ -564,6 +572,7 @@ trait CharCodecModule extends CodecModule {
 
     def m_pushInt(m: MethodVisitor, i: Int): Unit =
       i match {
+        case -1                             => m.visitInsn(ICONST_M1)
         case 0                              => m.visitInsn(ICONST_0)
         case 1                              => m.visitInsn(ICONST_1)
         case 2                              => m.visitInsn(ICONST_2)
@@ -572,6 +581,12 @@ trait CharCodecModule extends CodecModule {
         case s if -32768 <= s && s <= 32767 => m.visitIntInsn(SIPUSH, s)
         case i                              => m.visitLdcInsn(i)
       }
+
+    def m_pushNoValue(m: MethodVisitor): Unit = {
+      m.visitVarInsn(ALOAD, 0)
+      m.visitInsn(ICONST_0)
+      m.visitInsn(AALOAD)
+    }
 
     val c: ClassWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES)
     val name: String   = "MyCodec"
@@ -592,6 +607,7 @@ trait CharCodecModule extends CodecModule {
     // var1: Array[HashSet] - inclusion sets
     // var2: Array[char]    - input
     // var3: int            - input index
+
     m.visitInsn(ICONST_M1)
     m.visitVarInsn(ISTORE, 3)
 
@@ -620,28 +636,21 @@ trait CharCodecModule extends CodecModule {
             m.visitJumpInsn(GOTO, labelDone)
 
             m.visitLabel(labelNoInput)
-            m.visitVarInsn(ALOAD, 0)
-            m.visitInsn(ICONST_0) // todo: do not assume NoValue is first, use PushNoValue
-            m.visitInsn(AALOAD)
+            m_pushNoValue(m)
 
             m.visitLabel(labelDone)
 
           case InputRead(_, _) =>
             ???
 
-          case InputIdxPush =>
+          case InputIdxLoad =>
             m.visitVarInsn(ILOAD, 3)
 
           case InputIdxPop =>
             m.visitInsn(POP)
 
-          case InputIdxPopSet =>
+          case InputIdxStore =>
             m.visitVarInsn(ISTORE, 3)
-
-          case Push(AValue(0, NoValue)) =>
-            m.visitVarInsn(ALOAD, 0)
-            m.visitInsn(ICONST_0)
-            m.visitInsn(AALOAD)
 
           case Push(AValue(idx, _)) =>
             m.visitVarInsn(ALOAD, 0)
@@ -650,6 +659,9 @@ trait CharCodecModule extends CodecModule {
 
           case PushInt(int) =>
             m_pushInt(m, int)
+
+          case PushNoValue =>
+            m_pushNoValue(m)
 
           case CheckSet(ASet(idx, _)) =>
             m.visitVarInsn(ALOAD, 1)
@@ -700,9 +712,13 @@ trait CharCodecModule extends CodecModule {
           case Swap =>
             m.visitInsn(SWAP)
 
-          case StoreRegister0 => ???
-          case LoadRegister0  => ???
-          case IAdd           => ???
+          case StoreRegister0 =>
+            m.visitVarInsn(ASTORE, 4)
+
+          case LoadRegister0 =>
+            m.visitVarInsn(ALOAD, 4)
+
+          case IAdd => ???
         }
     }
 
