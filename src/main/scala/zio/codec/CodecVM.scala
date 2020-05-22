@@ -28,9 +28,10 @@ object CodecVM {
 
   private[zio] final case class Call1(f: AnyRef => AnyRef)                extends CodecVM // pop 1 thing, pass to f and push on stack
   private[zio] final case class Fail(err: String)                         extends CodecVM // exit with failure
-  private[zio] final case class BeginMethod(name: String)                 extends CodecVM // beginning of a new method
-  private[zio] final case class EndMethod(name: String)                   extends CodecVM // end of a method
-  private[zio] final case class InvokeStatic(name: String, address: Int)  extends CodecVM // call a method
+
+  private[zio] final case class BeginMethod(name: String)                 extends CodecVM // begin new method
+  private[zio] final case class EndMethod(name: String)                   extends CodecVM // end new method
+  private[zio] final case class CallMethod(name: String, address: Int)    extends CodecVM // call method
 
   private[zio] final case class New(ins: ANew)                            extends CodecVM // creates new instance, push reference on stack
   private[zio] final case class CheckCast(owner: String)                  extends CodecVM // check if value on the stack is of certain type
