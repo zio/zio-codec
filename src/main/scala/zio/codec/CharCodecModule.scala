@@ -314,7 +314,7 @@ trait CharCodecModule extends CodecModule {
 
                 VM.Swap,                         // accumulate
                 VM.InputIdxPop,
-                VM.Call2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
+                VM.InvokeInterface2("zio/Chunk", "$plus", "(Ljava/lang/Object;)Lzio/Chunk;", (l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
                 VM.Jump(lRepeat),
 
                 VM.Pop,                          // finish
@@ -346,7 +346,7 @@ trait CharCodecModule extends CodecModule {
 
                 VM.Swap,                         // accumulate element
                 VM.InputIdxPop,
-                VM.Call2((l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
+                VM.InvokeInterface2("zio/Chunk", "$plus", "(Ljava/lang/Object;)Lzio/Chunk;", (l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
                 VM.StoreRegister0,
                 VM.PushInt(1),
                 VM.IAdd,
@@ -467,19 +467,8 @@ trait CharCodecModule extends CodecModule {
         case ACmpNe(ALabel(_, address)) =>
           if (stackPopResolve().eq(stackPopResolve())) i += 1 else i = address
 
-        case New(ins @ ANew(id, _)) =>
-          createdInstances += (id -> null.asInstanceOf[AnyRef])
-          stack.push(ins)
-          i += 1
-
         case Call1(f) =>
           stack.push(f(stackPopResolve()))
-          i += 1
-
-        case Call2(f) =>
-          val arg2 = stackPopResolve()
-          val arg1 = stackPopResolve()
-          stack.push(f(arg1, arg2))
           i += 1
 
         case Fail(err) =>
@@ -498,6 +487,11 @@ trait CharCodecModule extends CodecModule {
           frameStack.push(i.asInstanceOf[AnyRef])
           i = address
 
+        case New(ins @ ANew(id, _)) =>
+          createdInstances += (id -> null.asInstanceOf[AnyRef])
+          stack.push(ins)
+          i += 1
+
         case InvokeSpecial1(_, _, _, f) =>
           val arg1        = stackPopResolve()
           val ANew(id, _) = stack.pop()
@@ -509,6 +503,12 @@ trait CharCodecModule extends CodecModule {
           val arg1        = stackPopResolve()
           val ANew(id, _) = stack.pop()
           createdInstances += (id -> f(arg1, arg2))
+          i += 1
+
+        case InvokeInterface2(_, _, _, f) =>
+          val arg2 = stackPopResolve()
+          val arg1 = stackPopResolve()
+          stack.push(f(arg1, arg2))
           i += 1
 
         case Noop =>
@@ -683,9 +683,6 @@ trait CharCodecModule extends CodecModule {
           case ACmpNe(ALabel(idx, _)) =>
             m.visitJumpInsn(IF_ACMPNE, labels(idx)._1)
 
-          case Call1(f) => ???
-          case Call2(f) => ???
-
           case New(ANew(_, owner)) =>
             m.visitTypeInsn(NEW, owner)
 
@@ -695,6 +692,10 @@ trait CharCodecModule extends CodecModule {
           case InvokeSpecial2(owner, name, args, _) =>
             m.visitMethodInsn(INVOKESPECIAL, owner, name, args, false)
 
+          case InvokeInterface2(owner, name, args, _) =>
+            m.visitMethodInsn(INVOKEINTERFACE, owner, name, args, true)
+
+          case Call1(f)                    => ???
           case Fail(err)                   => ???
           case BeginMethod(name)           => ???
           case Return(name)                => ???
@@ -718,7 +719,8 @@ trait CharCodecModule extends CodecModule {
           case LoadRegister0 =>
             m.visitVarInsn(ALOAD, 4)
 
-          case IAdd => ???
+          case IAdd =>
+            m.visitInsn(IADD)
         }
     }
 

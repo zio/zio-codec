@@ -38,9 +38,6 @@ trait BitCodecModule extends CodecModule {
         case CodecVM.Call1(f) =>
           stack.push(f(stack.pop()))
 
-        case CodecVM.Call2(f) =>
-          stack.push(f(stack.pop(), stack.pop()))
-
         case CodecVM.Fail(err) =>
           return Left(DecodeError(err, i))
 

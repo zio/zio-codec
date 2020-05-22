@@ -26,15 +26,17 @@ object CodecVM {
   private[zio] final case class ACmpEq(label: ALabel)                     extends CodecVM // pop 2 references and jump to new address if they are equal
   private[zio] final case class ACmpNe(label: ALabel)                     extends CodecVM // pop 2 references and jump to new address if they are not equal
 
-  private[zio] final case class New(ins: ANew)                            extends CodecVM // creates new instance, push reference on stack
   private[zio] final case class Call1(f: AnyRef => AnyRef)                extends CodecVM // pop 1 thing, pass to f and push on stack
-  private[zio] final case class Call2(f: (AnyRef, AnyRef) => AnyRef)      extends CodecVM // pop 2 things, pass to f and push on stack
   private[zio] final case class Fail(err: String)                         extends CodecVM // exit with failure
   private[zio] final case class BeginMethod(name: Int)                    extends CodecVM // denote start of a new method
   private[zio] final case class Return(name: Int)                         extends CodecVM // return from method
   private[zio] final case class InvokeStatic(name: Int, address: Int)     extends CodecVM // call a method
-  private[zio] final case class InvokeSpecial1(owner: String, name: String, desc: String, f: AnyRef => AnyRef)           extends CodecVM // pop args and instance and invoke constructor
-  private[zio] final case class InvokeSpecial2(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef) extends CodecVM // pop args and instance and invoke constructor
+
+  private[zio] final case class New(ins: ANew)                            extends CodecVM // creates new instance, push reference on stack
+  private[zio] final case class InvokeSpecial1(owner: String, name: String, desc: String, f: AnyRef => AnyRef)             extends CodecVM // pop args and instance and invoke constructor
+  private[zio] final case class InvokeSpecial2(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef)   extends CodecVM // pop args and instance and invoke constructor
+  private[zio] final case class InvokeInterface2(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef) extends CodecVM // pop args and instance and invoke interface
+
   private[zio] final case object Noop                                     extends CodecVM // do nothing
   private[zio] final case object Pop                                      extends CodecVM // pop 1 thing
   private[zio] final case object Duplicate                                extends CodecVM // duplicate stack head
