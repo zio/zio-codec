@@ -63,8 +63,8 @@ trait CharCodecModule extends CodecModule {
 
     val VM = CodecVM
 
-    var methodCount: Int  = 0
-    var invoked: Set[Int] = Set.empty
+    var methodCount: Int     = 0
+    var invoked: Set[String] = Set.empty
 
     var labelCount: Int       = 0
     var labels: Map[Int, Int] = Map.empty
@@ -101,12 +101,12 @@ trait CharCodecModule extends CodecModule {
           VM.AValue(idx, v)
       }
 
-    def compile[A0](codec: Codec[A0], offset: Int, chain: Map[AnyRef, (Int, Int)]): Array[CodecVM] = {
+    def compile[A0](codec: Codec[A0], offset: Int, chain: Map[AnyRef, (String, Int)]): Array[CodecVM] = {
       chain
         .get(codec)
         .fold[Array[CodecVM]] {
-          val chain1 = chain + (codec -> ((methodCount, offset)))
-          val name   = methodCount
+          val name   = "m" + methodCount
+          val chain1 = chain + (codec -> ((name, offset)))
 
           methodCount += 1
 
@@ -135,7 +135,11 @@ trait CharCodecModule extends CodecModule {
               )
 
               val mapProgram: Array[CodecVM] = map.equiv match {
-                case Equiv.Left(_)      => Array(VM.Call1(_.asInstanceOf[(AnyRef, _)]._1))
+                case Equiv.Left(_) =>
+                  Array(
+                    VM.CheckCast("scala/Tuple2"),
+                    VM.InvokeVirtual1("scala/Tuple2", "_1", "()Ljava/lang/Object;", _.asInstanceOf[(AnyRef, _)]._1)
+                  )
                 case Equiv.Right(_)     => Array(VM.Call1(_.asInstanceOf[(_, AnyRef)]._2))
                 case Equiv.Merge()      => Array(VM.Call1(_.asInstanceOf[Either[AnyRef, AnyRef]].merge))
                 case Equiv.Ignore(_)    => Array(VM.Pop, VM.Push(newValue(BoxedUnit.UNIT)))
@@ -151,7 +155,7 @@ trait CharCodecModule extends CodecModule {
               program ++ Array(
                 VM.ACmpEq(lBail)
               ) ++ mapProgram ++ Array(
-                VM.Return(name)
+                VM.EndMethod(name)
               )
 
             case filter @ Codec.Filter(value, _, mod) =>
@@ -176,7 +180,7 @@ trait CharCodecModule extends CodecModule {
 
                 VM.Pop,                          // mismatch
                 VM.PushNoValue,
-                VM.Return(name)                  // match, exit
+                VM.EndMethod(name)               // match, exit
               )
               // format: on
 
@@ -215,7 +219,7 @@ trait CharCodecModule extends CodecModule {
                   VM.Pop,
                   VM.Pop,
                   VM.PushNoValue,
-                  VM.Return(name)                // exit
+                  VM.EndMethod(name)             // exit
                 )
               // format: on
 
@@ -247,7 +251,7 @@ trait CharCodecModule extends CodecModule {
                 VM.Pop,
                 VM.InputIdxStore,
                 VM.Push(newValue(None)),
-                VM.Return(name)                  // exit
+                VM.EndMethod(name)               // exit
               )
               // format: on
 
@@ -291,7 +295,7 @@ trait CharCodecModule extends CodecModule {
                   VM.Duplicate,
                   VM.LoadRegister0,
                   VM.InvokeSpecial1("scala/util/Left", "<init>", "(Ljava/lang/Object;)V", scala.util.Left.apply),
-                  VM.Return(name)                // exit
+                  VM.EndMethod(name)             // exit
                 )
               // format: on
 
@@ -319,7 +323,7 @@ trait CharCodecModule extends CodecModule {
 
                 VM.Pop,                          // finish
                 VM.InputIdxStore,
-                VM.Return(name)
+                VM.EndMethod(name)
               )
               // format: on
 
@@ -366,7 +370,7 @@ trait CharCodecModule extends CodecModule {
                 VM.Pop,
                 VM.Pop,
                 VM.PushNoValue,
-                VM.Return(name)                  // exit
+                VM.EndMethod(name)               // exit
               )
               // format: on
 
@@ -385,7 +389,7 @@ trait CharCodecModule extends CodecModule {
     // optimization: inline methods
     val ret1 = ret0.map {
       case i @ VM.BeginMethod(name) => if (invoked.contains(name)) i else VM.Noop
-      case i @ VM.Return(name)      => if (invoked.contains(name)) i else VM.Noop
+      case i @ VM.EndMethod(name)   => if (invoked.contains(name)) i else VM.Noop
       case i                        => i
     }
 
@@ -409,7 +413,7 @@ trait CharCodecModule extends CodecModule {
     var inputIndex: Int  = -1
     val inputLength: Int = input.length
 
-    val frameStack: Stack[AnyRef] = Stack()
+    val callStack: Stack[AnyRef] = Stack()
 
     var r0: AnyRef = null.asInstanceOf[AnyRef]
 
@@ -475,21 +479,24 @@ trait CharCodecModule extends CodecModule {
           return Left(DecodeError(err, inputIndex))
 
         case BeginMethod(_) =>
-          frameStack.push((-1).asInstanceOf[AnyRef])
+          callStack.push((-1).asInstanceOf[AnyRef])
           i += 1
 
-        case Return(_) =>
-          val address = frameStack.pop().asInstanceOf[Int]
+        case EndMethod(_) =>
+          val address = callStack.pop().asInstanceOf[Int]
           if (address == -1) i += 1
           else i = address + 1
 
         case InvokeStatic(_, address) =>
-          frameStack.push(i.asInstanceOf[AnyRef])
+          callStack.push(i.asInstanceOf[AnyRef])
           i = address
 
         case New(ins @ ANew(id, _)) =>
           createdInstances += (id -> null.asInstanceOf[AnyRef])
           stack.push(ins)
+          i += 1
+
+        case CheckCast(_) =>
           i += 1
 
         case InvokeSpecial1(_, _, _, f) =>
@@ -503,6 +510,10 @@ trait CharCodecModule extends CodecModule {
           val arg1        = stackPopResolve()
           val ANew(id, _) = stack.pop()
           createdInstances += (id -> f(arg1, arg2))
+          i += 1
+
+        case InvokeVirtual1(_, _, _, f) =>
+          stack.push(f(stackPopResolve()))
           i += 1
 
         case InvokeInterface2(_, _, _, f) =>
@@ -555,7 +566,7 @@ trait CharCodecModule extends CodecModule {
   private class ByteClassLoader extends ClassLoader {
     def load(name: String, bytes: Array[Byte]): Method = {
       val c = defineClass(name, bytes, 0, bytes.length)
-      val m = c.getMethods.head
+      val m = c.getMethods.find(_.getName == "run").get
       m
     }
   }
@@ -589,11 +600,11 @@ trait CharCodecModule extends CodecModule {
     }
 
     val c: ClassWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES)
-    val name: String   = "MyCodec"
+    val owner: String  = "MyCodec"
 
-    c.visit(V1_8, ACC_PUBLIC | ACC_SUPER, name, null, "java/lang/Object", null)
+    c.visit(V1_8, ACC_PUBLIC | ACC_SUPER, owner, null, "java/lang/Object", null)
 
-    val m: MethodVisitor =
+    val main: MethodVisitor =
       c.visitMethod(
         ACC_PUBLIC | ACC_STATIC,
         "run",
@@ -601,23 +612,78 @@ trait CharCodecModule extends CodecModule {
         null,
         null
       )
-    m.visitCode()
+    main.visitCode()
 
     // var0: Array[Object]  - external values
     // var1: Array[HashSet] - inclusion sets
     // var2: Array[char]    - input
     // var3: int            - input index
 
-    m.visitInsn(ICONST_M1)
-    m.visitVarInsn(ISTORE, 3)
+    main.visitInsn(ICONST_M1)
+    main.visitVarInsn(ISTORE, 3)
 
-    instructions.zipWithIndex.foreach {
-      case (ins, address) =>
+    def compile(m: MethodVisitor, offset: Int): Int = {
+      var address: Int      = offset
+      var finished: Boolean = false
+
+      while (!finished && address < instructions.length) {
+        val ins = instructions(address)
+
         labelAddresses
           .get(address)
           .foreach(_.foreach(m.visitLabel))
 
+        address += 1
+
         ins match {
+          case BeginMethod(name) =>
+            m.visitVarInsn(ALOAD, 0)
+            m.visitVarInsn(ALOAD, 1)
+            m.visitVarInsn(ALOAD, 2)
+            m.visitVarInsn(ILOAD, 3)
+            m.visitMethodInsn(
+              INVOKESTATIC,
+              owner,
+              name,
+              "([Ljava/lang/Object;[Ljava/util/HashSet;[CI)Lscala/Tuple2;",
+              false
+            )
+
+            // todo: try with a mutable state
+            // read input index
+            m.visitInsn(DUP)
+            m.visitMethodInsn(INVOKEVIRTUAL, "scala/Tuple2", "_2", "()Ljava/lang/Object;", false)
+            m.visitTypeInsn(CHECKCAST, "java/lang/Integer")
+            m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false)
+            m.visitVarInsn(ISTORE, 3)
+            m.visitMethodInsn(INVOKEVIRTUAL, "scala/Tuple2", "_1", "()Ljava/lang/Object;", false)
+
+            val m2: MethodVisitor = c.visitMethod(
+              ACC_PUBLIC | ACC_STATIC,
+              name,
+              "([Ljava/lang/Object;[Ljava/util/HashSet;[CI)Lscala/Tuple2;",
+              null,
+              null
+            )
+            m2.visitCode()
+
+            m2.visitTypeInsn(NEW, "scala/Tuple2")
+            m2.visitInsn(DUP)
+
+            address = compile(m2, address)
+
+            m2.visitMaxs(0, 0)
+            m2.visitEnd()
+
+          case EndMethod(_) =>
+            // todo: try with a mutable state
+            m.visitVarInsn(ILOAD, 3)
+            m.visitMethodInsn(INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false)
+            m.visitMethodInsn(INVOKESPECIAL, "scala/Tuple2", "<init>", "(Ljava/lang/Object;Ljava/lang/Object;)V", false)
+            m.visitInsn(ARETURN)
+
+            finished = true
+
           case InputRead(None, None) =>
             val labelNoInput = new Label()
             val labelDone    = new Label()
@@ -626,7 +692,7 @@ trait CharCodecModule extends CodecModule {
 
             m.visitVarInsn(ILOAD, 3)
             m.visitVarInsn(ALOAD, 2)
-            m.visitInsn(ARRAYLENGTH);
+            m.visitInsn(ARRAYLENGTH)
             m.visitJumpInsn(IF_ICMPGE, labelNoInput)
 
             m.visitVarInsn(ALOAD, 2)
@@ -669,7 +735,7 @@ trait CharCodecModule extends CodecModule {
             m.visitInsn(AALOAD)
 
             m.visitInsn(SWAP)
-            m.visitMethodInsn(INVOKEVIRTUAL, "java/util/HashSet", "contains", "(Ljava/lang/Object;)Z", false);
+            m.visitMethodInsn(INVOKEVIRTUAL, "java/util/HashSet", "contains", "(Ljava/lang/Object;)Z", false)
 
           case Jump(ALabel(idx, _)) =>
             m.visitJumpInsn(GOTO, labels(idx)._1)
@@ -686,20 +752,47 @@ trait CharCodecModule extends CodecModule {
           case New(ANew(_, owner)) =>
             m.visitTypeInsn(NEW, owner)
 
+          case CheckCast(owner) =>
+            m.visitTypeInsn(CHECKCAST, owner)
+
           case InvokeSpecial1(owner, name, args, _) =>
             m.visitMethodInsn(INVOKESPECIAL, owner, name, args, false)
 
           case InvokeSpecial2(owner, name, args, _) =>
             m.visitMethodInsn(INVOKESPECIAL, owner, name, args, false)
 
+          case InvokeVirtual1(owner, name, args, _) =>
+            m.visitMethodInsn(INVOKEVIRTUAL, owner, name, args, false)
+
           case InvokeInterface2(owner, name, args, _) =>
             m.visitMethodInsn(INVOKEINTERFACE, owner, name, args, true)
 
-          case Call1(f)                    => ???
-          case Fail(err)                   => ???
-          case BeginMethod(name)           => ???
-          case Return(name)                => ???
-          case InvokeStatic(name, address) => ???
+          case InvokeStatic(name, address) =>
+            // todo
+//            m_pushNoValue(m)
+            m.visitVarInsn(ALOAD, 0)
+            m.visitVarInsn(ALOAD, 1)
+            m.visitVarInsn(ALOAD, 2)
+            m.visitVarInsn(ILOAD, 3)
+            m.visitMethodInsn(
+              INVOKESTATIC,
+              owner,
+              name,
+              "([Ljava/lang/Object;[Ljava/util/HashSet;[CI)Lscala/Tuple2;",
+              false
+            )
+
+            // todo: try with a mutable field
+            // read input index
+            m.visitInsn(DUP)
+            m.visitMethodInsn(INVOKEVIRTUAL, "scala/Tuple2", "_2", "()Ljava/lang/Object;", false)
+            m.visitTypeInsn(CHECKCAST, "java/lang/Integer")
+            m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false)
+            m.visitVarInsn(ISTORE, 3)
+            m.visitMethodInsn(INVOKEVIRTUAL, "scala/Tuple2", "_1", "()Ljava/lang/Object;", false)
+
+          case Call1(f)  => ???
+          case Fail(err) => ???
 
           case Noop =>
             m.visitInsn(NOP)
@@ -722,12 +815,16 @@ trait CharCodecModule extends CodecModule {
           case IAdd =>
             m.visitInsn(IADD)
         }
+      }
+      address
     }
 
-    m.visitInsn(ARETURN)
-    m.visitMaxs(0, 0)
-    m.visitEnd()
+    compile(main, 0)
 
-    (name, c.toByteArray)
+    main.visitInsn(ARETURN)
+    main.visitMaxs(0, 0)
+    main.visitEnd()
+
+    (owner, c.toByteArray)
   }
 }
