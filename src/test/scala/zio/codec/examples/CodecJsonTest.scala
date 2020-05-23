@@ -115,7 +115,7 @@ object CodecJsonTest {
     println(dec(value))
 
     val t1: Long = System.nanoTime()
-    (1 to 10000).foreach { _ =>
+    (1 to 100000).foreach { _ =>
       dec(value)
     }
     val t2: Long = System.nanoTime() - t1
@@ -130,9 +130,9 @@ object CodecJsonTest {
   // 1,000,000  in 24.9 sec
 
   // zio-codec 0.0.1
-  //    10,000  in  2.2 sec
-  //   100,000  in 17.6 sec
-  // 1,000,000  in    ? sec
+  //    10,000  in  0.8 sec
+  //   100,000  in  4.1 sec
+  // 1,000,000  in 35.8 sec
 
   val value: Chunk[Char] =
     Chunk.fromArray("""{

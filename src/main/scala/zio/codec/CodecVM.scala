@@ -26,7 +26,6 @@ object CodecVM {
   private[zio] final case class ACmpEq(label: ALabel)                     extends CodecVM // pop 2 references and jump to new address if they are equal
   private[zio] final case class ACmpNe(label: ALabel)                     extends CodecVM // pop 2 references and jump to new address if they are not equal
 
-  private[zio] final case class Call1(f: AnyRef => AnyRef)                extends CodecVM // pop 1 thing, pass to f and push on stack
   private[zio] final case class Fail(err: String)                         extends CodecVM // exit with failure
 
   private[zio] final case class BeginMethod(name: String)                 extends CodecVM // begin new method

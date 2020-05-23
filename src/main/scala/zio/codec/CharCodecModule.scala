@@ -3,7 +3,6 @@ package zio.codec
 import java.lang.reflect.Method
 import java.util.UUID
 
-import com.github.ghik.silencer.silent
 import org.objectweb.asm.{ ClassWriter, Label, MethodVisitor, Opcodes }
 import zio.Chunk
 import zio.internal.Stack
@@ -23,7 +22,7 @@ trait CharCodecModule extends CodecModule {
   def charBetween(begin: Input, end: Input): Codec[Input] =
     consume.filter((begin to end).toSet)
 
-  def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
+  def interpreterDecoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
     val CodecCompilationResult(program, _, _, _) = compileCodec(codec)
 //    println(program.zipWithIndex.map { case (o, i) => i.toString.reverse.padTo(3, '0').reverse + ": " + o }.mkString("", "\n", "\n"))
     interpret(_, program).asInstanceOf[Either[DecodeError, (Int, A)]]
@@ -33,20 +32,25 @@ trait CharCodecModule extends CodecModule {
 
   def printer[A](codec: Codec[A]): List[String] = ???
 
-  // todo: rename functions, fix signature
-  def decoder2[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
+  def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
     val CodecCompilationResult(program, labels, values, lookups) = compileCodec(codec)
-    println(program.zipWithIndex.map { case (o, i) => i.toString.reverse.padTo(3, '0').reverse + ": " + o }
-      .mkString("", "\n", "\n"))
+//    println(program.zipWithIndex.map { case (o, i) => i.toString.reverse.padTo(3, '0').reverse + ": " + o }.mkString("", "\n", "\n"))
 
     val (name, bytes) = compileCodecVM(program, labels)
     val method        = new ByteClassLoader().load(name, bytes)
 
-    println(bytes.length)
-    println(method)
-    println()
+//    println(bytes.length)
+//    println(method)
+//    println()
 
-    s => Right((123, method.invoke(null, NoValue +: values, lookups, s.toArray).asInstanceOf[A]))
+    val state: Array[Int] = Array(-1)
+    s => {
+      method.invoke(null, NoValue +: values, lookups, s.toArray, state) match {
+        case null    => Left(DecodeError("bug in our implementation, please report to us", 0))
+        case NoValue => Left(DecodeError("no match", state(0) + 1))
+        case v       => Right((state(0) + 1, v.asInstanceOf[A]))
+      }
+    }
   }
 
   private case object NoValue
@@ -185,7 +189,18 @@ trait CharCodecModule extends CodecModule {
 
                 case Equiv.Bits.UInt16 => ???
 
-                case Equiv.ForTesting(f) => Array(VM.Call1(f.asInstanceOf[AnyRef => AnyRef]))
+                case Equiv.ForTesting(f) =>
+                  Array(
+                    VM.Push(newValue(f)),
+                    VM.CheckCast("scala/Function1"),
+                    VM.Swap,
+                    VM.InvokeInterface1(
+                      "scala/Function1",
+                      "apply",
+                      "(Ljava/lang/Object;)Ljava/lang/Object;",
+                      (f, a) => f.asInstanceOf[AnyRef => AnyRef](a)
+                    )
+                  )
               }
 
               val lBail = newLabel(offset + program.length + 1 + mapProgram.length)
@@ -522,10 +537,6 @@ trait CharCodecModule extends CodecModule {
         case ACmpNe(ALabel(_, address)) =>
           if (stackPopResolve().eq(stackPopResolve())) i += 1 else i = address
 
-        case Call1(f) =>
-          stack.push(f(stackPopResolve()))
-          i += 1
-
         case Fail(err) =>
           return Left(DecodeError(err, inputIndex))
 
@@ -623,7 +634,6 @@ trait CharCodecModule extends CodecModule {
     }
   }
 
-  @silent
   private def compileCodecVM(instructions: Array[CodecVM], addresses: Map[Int, Int]): (String, Array[Byte]) = {
     import CodecVM._
     import Opcodes._
@@ -651,30 +661,30 @@ trait CharCodecModule extends CodecModule {
       m.visitInsn(AALOAD)
     }
 
-    def m_callMethod(m: MethodVisitor, owner: String, name: String) {
+    def m_callMethod(m: MethodVisitor, owner: String, name: String): Unit = {
       m.visitVarInsn(ALOAD, 0)
       m.visitVarInsn(ALOAD, 1)
       m.visitVarInsn(ALOAD, 2)
-      m.visitVarInsn(ILOAD, 3)
-      m.visitVarInsn(ALOAD, 4)
+      m.visitVarInsn(ALOAD, 3)
+      m.visitVarInsn(ILOAD, 4)
 
       m.visitMethodInsn(
         INVOKESTATIC,
         owner,
         name,
-        "([Ljava/lang/Object;[Ljava/util/HashSet;[CI[I)Ljava/lang/Object;",
+        "([Ljava/lang/Object;[Ljava/util/HashSet;[C[II)Ljava/lang/Object;",
         false
       )
 
-      // continue from input index returned from method
-      m.visitVarInsn(ALOAD, 4)
+      // continue from input index returned from the method
+      m.visitVarInsn(ALOAD, 3)
       m.visitInsn(ICONST_0)
       m.visitInsn(IALOAD)
-      m.visitVarInsn(ISTORE, 3)
+      m.visitVarInsn(ISTORE, 4)
     }
 
     val c: ClassWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES)
-    val owner: String  = "MyCodec"
+    val owner: String  = "Decoder" + UUID.randomUUID().toString.replace("-", "")
 
     c.visit(V1_8, ACC_PUBLIC | ACC_SUPER, owner, null, "java/lang/Object", null)
 
@@ -682,7 +692,7 @@ trait CharCodecModule extends CodecModule {
       c.visitMethod(
         ACC_PUBLIC | ACC_STATIC,
         "run",
-        "([Ljava/lang/Object;[Ljava/util/HashSet;[C)Ljava/lang/Object;",
+        "([Ljava/lang/Object;[Ljava/util/HashSet;[C[I)Ljava/lang/Object;",
         null,
         null
       )
@@ -691,15 +701,11 @@ trait CharCodecModule extends CodecModule {
     // var0: Array[Object]  - external values
     // var1: Array[HashSet] - inclusion sets
     // var2: Array[char]    - input
-    // var3: int            - input index
-    // var4: Array[int]     - local state with input index
+    // var3: Array[int]     - size = 1, local state with input index
+    // var4: int            - input index
 
     main.visitInsn(ICONST_M1)
-    main.visitVarInsn(ISTORE, 3)
-
-    main.visitInsn(ICONST_1)
-    main.visitIntInsn(NEWARRAY, T_INT)
-    main.visitVarInsn(ASTORE, 4)
+    main.visitVarInsn(ISTORE, 4)
 
     def compile(m: MethodVisitor, offset: Int): Int = {
       var address: Int      = offset
@@ -721,7 +727,7 @@ trait CharCodecModule extends CodecModule {
             val m2: MethodVisitor = c.visitMethod(
               ACC_PUBLIC | ACC_STATIC,
               name,
-              "([Ljava/lang/Object;[Ljava/util/HashSet;[CI[I)Ljava/lang/Object;",
+              "([Ljava/lang/Object;[Ljava/util/HashSet;[C[II)Ljava/lang/Object;",
               null,
               null
             )
@@ -736,9 +742,9 @@ trait CharCodecModule extends CodecModule {
             finished = true
 
             // store input index to be returned from method
-            m.visitVarInsn(ALOAD, 4)
+            m.visitVarInsn(ALOAD, 3)
             m.visitInsn(ICONST_0)
-            m.visitVarInsn(ILOAD, 3)
+            m.visitVarInsn(ILOAD, 4)
             m.visitInsn(IASTORE)
             m.visitInsn(ARETURN)
 
@@ -749,15 +755,15 @@ trait CharCodecModule extends CodecModule {
             val labelNoInput = new Label()
             val labelDone    = new Label()
 
-            m.visitIincInsn(3, 1)
+            m.visitIincInsn(4, 1)
 
-            m.visitVarInsn(ILOAD, 3)
+            m.visitVarInsn(ILOAD, 4)
             m.visitVarInsn(ALOAD, 2)
             m.visitInsn(ARRAYLENGTH)
             m.visitJumpInsn(IF_ICMPGE, labelNoInput)
 
             m.visitVarInsn(ALOAD, 2)
-            m.visitVarInsn(ILOAD, 3)
+            m.visitVarInsn(ILOAD, 4)
             m.visitInsn(CALOAD)
             m.visitMethodInsn(INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;", false)
             m.visitJumpInsn(GOTO, labelDone)
@@ -771,13 +777,13 @@ trait CharCodecModule extends CodecModule {
             ???
 
           case InputIdxLoad =>
-            m.visitVarInsn(ILOAD, 3)
+            m.visitVarInsn(ILOAD, 4)
 
           case InputIdxPop =>
             m.visitInsn(POP)
 
           case InputIdxStore =>
-            m.visitVarInsn(ISTORE, 3)
+            m.visitVarInsn(ISTORE, 4)
 
           case Push(AValue(idx, _)) =>
             m.visitVarInsn(ALOAD, 0)
@@ -837,8 +843,7 @@ trait CharCodecModule extends CodecModule {
           case InvokeInterface1(owner, name, args, _) =>
             m.visitMethodInsn(INVOKEINTERFACE, owner, name, args, true)
 
-          case Call1(f)  => ???
-          case Fail(err) => ???
+          case Fail(_) => ???
 
           case Noop =>
             m.visitInsn(NOP)
@@ -866,6 +871,12 @@ trait CharCodecModule extends CodecModule {
     }
 
     compile(main, 0)
+
+    // store input index to be returned from method
+    main.visitVarInsn(ALOAD, 3)
+    main.visitInsn(ICONST_0)
+    main.visitVarInsn(ILOAD, 4)
+    main.visitInsn(IASTORE)
 
     main.visitInsn(ARETURN)
     main.visitMaxs(0, 0)
