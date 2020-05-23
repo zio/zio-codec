@@ -35,10 +35,13 @@ object CodecVM {
 
   private[zio] final case class New(ins: ANew)                            extends CodecVM // creates new instance, push reference on stack
   private[zio] final case class CheckCast(owner: String)                  extends CodecVM // check if value on the stack is of certain type
-  private[zio] final case class InvokeSpecial1(owner: String, name: String, desc: String, f: AnyRef => AnyRef)             extends CodecVM // pop args and instance and invoke constructor
-  private[zio] final case class InvokeSpecial2(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef)   extends CodecVM // pop args and instance and invoke constructor
-  private[zio] final case class InvokeVirtual1(owner: String, name: String, desc: String, f: AnyRef => AnyRef)             extends CodecVM // pop args and instance and invoke virtual method
-  private[zio] final case class InvokeInterface2(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef) extends CodecVM // pop args and instance and invoke interface method
+  private[zio] final case class GetStatic(owner: String, name: String, desc: String, v: AnyRef)                            extends CodecVM // place value of the static field on the stack
+  private[zio] final case class InvokeSpecial1(owner: String, name: String, desc: String, f: AnyRef => AnyRef)             extends CodecVM // pop arg and instance, invoke constructor
+  private[zio] final case class InvokeSpecial2(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef)   extends CodecVM // pop 2 args and instance, invoke constructor
+  private[zio] final case class InvokeVirtual0(owner: String, name: String, desc: String, f: AnyRef => AnyRef)             extends CodecVM // pop instance, invoke virtual method
+  private[zio] final case class InvokeVirtual1(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef)   extends CodecVM // pop arg and instance, invoke virtual method
+  private[zio] final case class InvokeInterface0(owner: String, name: String, desc: String, f: AnyRef => AnyRef)           extends CodecVM // pop instance, invoke interface method
+  private[zio] final case class InvokeInterface1(owner: String, name: String, desc: String, f: (AnyRef, AnyRef) => AnyRef) extends CodecVM // pop arg and instance, invoke interface method
 
   private[zio] final case object Noop                                     extends CodecVM // do nothing
   private[zio] final case object Pop                                      extends CodecVM // pop 1 thing

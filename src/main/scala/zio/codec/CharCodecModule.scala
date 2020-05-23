@@ -138,14 +138,52 @@ trait CharCodecModule extends CodecModule {
                 case Equiv.Left(_) =>
                   Array(
                     VM.CheckCast("scala/Tuple2"),
-                    VM.InvokeVirtual1("scala/Tuple2", "_1", "()Ljava/lang/Object;", _.asInstanceOf[(AnyRef, _)]._1)
+                    VM.InvokeVirtual0("scala/Tuple2", "_1", "()Ljava/lang/Object;", _.asInstanceOf[(AnyRef, _)]._1)
                   )
-                case Equiv.Right(_)     => Array(VM.Call1(_.asInstanceOf[(_, AnyRef)]._2))
-                case Equiv.Merge()      => Array(VM.Call1(_.asInstanceOf[Either[AnyRef, AnyRef]].merge))
-                case Equiv.Ignore(_)    => Array(VM.Pop, VM.Push(newValue(BoxedUnit.UNIT)))
-                case Equiv.As(b, _)     => Array(VM.Pop, VM.Push(newValue(b.asInstanceOf[AnyRef])))
-                case Equiv.Chars.String => Array(VM.Call1(_.asInstanceOf[Chunk[Char]].mkString))
-                case Equiv.Bits.UInt16  => ???
+
+                case Equiv.Right(_) =>
+                  Array(
+                    VM.CheckCast("scala/Tuple2"),
+                    VM.InvokeVirtual0("scala/Tuple2", "_2", "()Ljava/lang/Object;", _.asInstanceOf[(_, AnyRef)]._2)
+                  )
+
+                case Equiv.Merge() =>
+                  Array(
+                    VM.GetStatic("zio/codec/Equiv$", "MODULE$", "Lzio/codec/Equiv$;", Equiv),
+                    VM.Swap,
+                    VM.CheckCast("scala/util/Either"),
+                    VM.InvokeVirtual1(
+                      "zio/codec/Equiv$",
+                      "merge",
+                      "(Lscala/util/Either;)Ljava/lang/Object;",
+                      (equiv, v) => equiv.asInstanceOf[Equiv.type].merge(v.asInstanceOf[Either[AnyRef, AnyRef]])
+                    )
+                  )
+
+                case Equiv.Ignore(_) =>
+                  Array(
+                    VM.Pop,
+                    VM.Push(newValue(BoxedUnit.UNIT))
+                  )
+
+                case Equiv.As(b, _) =>
+                  Array(
+                    VM.Pop,
+                    VM.Push(newValue(b.asInstanceOf[AnyRef]))
+                  )
+
+                case Equiv.Chars.String =>
+                  Array(
+                    VM.CheckCast("zio/Chunk"),
+                    VM.InvokeInterface0(
+                      "zio/Chunk",
+                      "mkString",
+                      "()Ljava/lang/String;",
+                      _.asInstanceOf[Chunk[Char]].mkString
+                    )
+                  )
+
+                case Equiv.Bits.UInt16 => ???
 
                 case Equiv.ForTesting(f) => Array(VM.Call1(f.asInstanceOf[AnyRef => AnyRef]))
               }
@@ -318,7 +356,7 @@ trait CharCodecModule extends CodecModule {
 
                 VM.Swap,                         // accumulate
                 VM.InputIdxPop,
-                VM.InvokeInterface2("zio/Chunk", "$plus", "(Ljava/lang/Object;)Lzio/Chunk;", (l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
+                VM.InvokeInterface1("zio/Chunk", "$plus", "(Ljava/lang/Object;)Lzio/Chunk;", (l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
                 VM.Jump(lRepeat),
 
                 VM.Pop,                          // finish
@@ -350,7 +388,7 @@ trait CharCodecModule extends CodecModule {
 
                 VM.Swap,                         // accumulate element
                 VM.InputIdxPop,
-                VM.InvokeInterface2("zio/Chunk", "$plus", "(Ljava/lang/Object;)Lzio/Chunk;", (l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
+                VM.InvokeInterface1("zio/Chunk", "$plus", "(Ljava/lang/Object;)Lzio/Chunk;", (l, a) => l.asInstanceOf[Chunk[AnyRef]] + a),
                 VM.StoreRegister0,
                 VM.PushInt(1),
                 VM.IAdd,
@@ -499,6 +537,10 @@ trait CharCodecModule extends CodecModule {
         case CheckCast(_) =>
           i += 1
 
+        case GetStatic(_, _, _, v) =>
+          stack.push(v)
+          i += 1
+
         case InvokeSpecial1(_, _, _, f) =>
           val arg1        = stackPopResolve()
           val ANew(id, _) = stack.pop()
@@ -512,11 +554,21 @@ trait CharCodecModule extends CodecModule {
           createdInstances += (id -> f(arg1, arg2))
           i += 1
 
-        case InvokeVirtual1(_, _, _, f) =>
+        case InvokeVirtual0(_, _, _, f) =>
           stack.push(f(stackPopResolve()))
           i += 1
 
-        case InvokeInterface2(_, _, _, f) =>
+        case InvokeVirtual1(_, _, _, f) =>
+          val arg2 = stackPopResolve()
+          val arg1 = stackPopResolve()
+          stack.push(f(arg1, arg2))
+          i += 1
+
+        case InvokeInterface0(_, _, _, f) =>
+          stack.push(f(stackPopResolve()))
+          i += 1
+
+        case InvokeInterface1(_, _, _, f) =>
           val arg2 = stackPopResolve()
           val arg1 = stackPopResolve()
           stack.push(f(arg1, arg2))
@@ -764,16 +816,25 @@ trait CharCodecModule extends CodecModule {
           case CheckCast(owner) =>
             m.visitTypeInsn(CHECKCAST, owner)
 
+          case GetStatic(owner, name, desc, _) =>
+            m.visitFieldInsn(GETSTATIC, owner, name, desc)
+
           case InvokeSpecial1(owner, name, args, _) =>
             m.visitMethodInsn(INVOKESPECIAL, owner, name, args, false)
 
           case InvokeSpecial2(owner, name, args, _) =>
             m.visitMethodInsn(INVOKESPECIAL, owner, name, args, false)
 
+          case InvokeVirtual0(owner, name, args, _) =>
+            m.visitMethodInsn(INVOKEVIRTUAL, owner, name, args, false)
+
           case InvokeVirtual1(owner, name, args, _) =>
             m.visitMethodInsn(INVOKEVIRTUAL, owner, name, args, false)
 
-          case InvokeInterface2(owner, name, args, _) =>
+          case InvokeInterface0(owner, name, args, _) =>
+            m.visitMethodInsn(INVOKEINTERFACE, owner, name, args, true)
+
+          case InvokeInterface1(owner, name, args, _) =>
             m.visitMethodInsn(INVOKEINTERFACE, owner, name, args, true)
 
           case Call1(f)  => ???
