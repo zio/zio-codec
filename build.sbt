@@ -46,6 +46,8 @@ lazy val codec =
         "dev.zio"     %% "zio-test"     % zioVersion % Test,
         "dev.zio"     %% "zio-test-sbt" % zioVersion % Test
       ),
+      fork in Test := true,
+      parallelExecution in Test := false,
       testFrameworks := Seq(new TestFramework("zio.test.sbt.ZTestFramework"))
     )
     .enablePlugins(BuildInfoPlugin)
