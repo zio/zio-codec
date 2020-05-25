@@ -3,10 +3,11 @@ package zio.codec
 import java.lang.reflect.Method
 import java.util.UUID
 
-import org.objectweb.asm.{ ClassWriter, Label, MethodVisitor, Opcodes }
+import org.objectweb.asm.{ClassWriter, Label, MethodVisitor, Opcodes}
 import zio.Chunk
 import zio.internal.Stack
 
+import scala.collection.mutable
 import scala.runtime.BoxedUnit
 
 trait CharCodecModule extends CodecModule {
@@ -51,6 +52,7 @@ trait CharCodecModule extends CodecModule {
         case v       => Right((state(0) + 1, v.asInstanceOf[A]))
       }
     }
+    // interpreterDecoder(codec)
   }
 
   private case object NoValue
@@ -212,30 +214,213 @@ trait CharCodecModule extends CodecModule {
               )
 
             case filter @ Codec.Filter(value, _, mod) =>
-              val program = Array(
-                VM.BeginMethod(name)
-              ) ++ compile(value(), offset + 1, chain1) ++ Array(
-                VM.Duplicate,
-                VM.PushNoValue
-              )
+              def default = {
+                val program = Array(
+                  VM.BeginMethod(name)
+                ) ++ compile(value(), offset + 1, chain1) ++ Array(
+                  VM.Duplicate,
+                  VM.PushNoValue
+                )
 
-              val lMatch = newLabel(offset + program.length + 7)
-              val lExit  = newLabel(offset + program.length + 7)
+                val lMatch = newLabel(offset + program.length + 7)
+                val lExit  = newLabel(offset + program.length + 7)
 
-              // format: off
-              program ++ Array(
-                VM.ACmpEq(lExit),
+                // format: off
+                program ++ Array(
+                  VM.ACmpEq(lExit),
 
-                VM.Duplicate,                    // filter
-                VM.CheckSet(newSet(filter)),
-                VM.PushInt(mod match { case Inside => 1; case Outside => 0 }),
-                VM.ICmpEq(lMatch),
+                  VM.Duplicate,                    // filter
+                  VM.CheckSet(newSet(filter)),
+                  VM.PushInt(mod match { case Inside => 1; case Outside => 0 }),
+                  VM.ICmpEq(lMatch),
 
-                VM.Pop,                          // mismatch
-                VM.PushNoValue,
-                VM.EndMethod(name)               // match, exit
-              )
-              // format: on
+                  VM.Pop,                          // mismatch
+                  VM.PushNoValue,
+                  VM.EndMethod(name)               // match, exit
+                )
+                // format: on
+              }
+
+              value() match {
+                case Codec.Rep(value, Some(len), Some(len2))
+                    if len == len2 && mod == Codec.FilterMode.Inside && filter.filter.size == 1 &&
+                       value().isInstanceOf[Codec.Consume.type]
+                =>
+                  val program = mutable.ArrayBuffer.empty[CodecVM]
+
+                  var id = 0
+                  def newLbl(): VM.ALabel = VM.ALabel(-1, { id += 1; id })
+                  val labelMap = mutable.HashMap.empty[Int, Int]
+                  def visitLabel(l: VM.ALabel): Unit = {
+                    labelMap += (l.address -> program.length)
+                  }
+                  def fixLabel(l: VM.ALabel): VM.ALabel =
+                    newLabel(offset + labelMap(l.address))
+
+                  val chunk = filter.filter.toList.head.asInstanceOf[Chunk[Char]]
+                  // System.err.println(chunk.mkString)
+
+                  val lExit = newLbl()
+                  val lFail = newLbl()
+                  program += VM.BeginMethod(name)
+
+                  for (ch <- chunk) {
+                    program += VM.InputReadInt(None, None)
+                    program += VM.Duplicate
+                    program += VM.PushInt(-1)
+                    program += VM.ICmpEq(lFail)
+                    program += VM.Duplicate
+                    program += VM.PushInt(ch.toInt)
+                    program += VM.ICmpNe(lFail)
+                    program += VM.Pop
+                  }
+
+                  program += VM.Push(newValue(chunk))
+                  program += VM.Jump(lExit)
+
+                  visitLabel(lFail)
+                  program += VM.Pop
+                  program += VM.PushNoValue
+
+                  visitLabel(lExit)
+                  program += VM.EndMethod(name)
+
+                  for (i <- program.indices) {
+                    program(i) match {
+                      case VM.Jump(l) => program(i) = VM.Jump(fixLabel(l))
+                      case VM.ACmpEq(l) => program(i) = VM.ACmpEq(fixLabel(l))
+                      case VM.ACmpNe(l) => program(i) = VM.ACmpNe(fixLabel(l))
+                      case VM.ICmpEq(l) => program(i) = VM.ICmpEq(fixLabel(l))
+                      case VM.ICmpNe(l) => program(i) = VM.ICmpNe(fixLabel(l))
+                      case VM.ICmpGt(l) => program(i) = VM.ICmpGt(fixLabel(l))
+                      case VM.ICmpLt(l) => program(i) = VM.ICmpLt(fixLabel(l))
+                      case VM.ICmpGtEq(l) => program(i) = VM.ICmpGtEq(fixLabel(l))
+                      case VM.ICmpLtEq(l) => program(i) = VM.ICmpLtEq(fixLabel(l))
+                      case _ => ()
+                    }
+                  }
+                  program.toArray
+
+                case Codec.Consume =>
+                  val program = mutable.ArrayBuffer.empty[CodecVM]
+
+                  var id = 0
+                  def newLbl(): VM.ALabel = VM.ALabel(-1, { id += 1; id })
+                  val labelMap = mutable.HashMap.empty[Int, Int]
+                  def visitLabel(l: VM.ALabel): Unit = {
+                    labelMap += (l.address -> program.length)
+                  }
+                  def fixLabel(l: VM.ALabel): VM.ALabel =
+                    newLabel(offset + labelMap(l.address))
+
+                  val lMatch = newLbl()
+                  val lNoMatch = newLbl()
+                  val lExit = newLbl()
+
+                  program += VM.BeginMethod(name)
+
+                  if (filter.filter.isEmpty) {
+                    mod match {
+                      case Codec.FilterMode.Inside =>
+                        program += VM.InputRead(None, None)
+                        program += VM.Pop
+                        program += VM.PushNoValue
+                      case Codec.FilterMode.Outside =>
+                        program += VM.InputRead(None, None)
+                    }
+                  } else {
+                    import RangeDecomposition._
+                    val lHasInput = newLbl()
+                    program += VM.InputReadInt(None, None)
+                    program += VM.Duplicate
+                    program += VM.PushInt(-1)
+                    program += VM.ICmpNe(lHasInput)
+                    program += VM.Pop
+                    program += VM.PushNoValue
+                    program += VM.Jump(lExit)
+                    visitLabel(lHasInput)
+
+                    def writeNode(t: Tree[Consecutive[Char]], rightmostSatisfied: Boolean): Unit = t match {
+                      case Leaf(Point(value)) =>
+                        program += VM.Duplicate
+                        program += VM.PushInt(value.toInt)
+                        program += VM.ICmpEq(lMatch)
+
+                      case Leaf(Range(left, right)) =>
+                        if (rightmostSatisfied) {
+                          program += VM.Duplicate
+                          program += VM.PushInt(left.toInt)
+                          program += VM.ICmpGtEq(lMatch)
+                        } else {
+                          val lContinue = newLbl()
+                          program += VM.Duplicate
+                          program += VM.PushInt(left.toInt)
+                          program += VM.ICmpLt(lContinue)
+                          program += VM.Duplicate
+                          program += VM.PushInt(right.toInt)
+                          program += VM.ICmpGt(lContinue)
+                          program += VM.Jump(lMatch)
+                          visitLabel(lContinue)
+                        }
+
+                      case Node(left, right) =>
+                        val lRight = newLbl()
+                        val r = left.rightmost.right
+                        program += VM.Duplicate
+                        program += VM.PushInt(r.toInt)
+                        program += VM.ICmpGt(lRight)
+                        writeNode(left, true)
+                        visitLabel(lRight)
+                        writeNode(right, false)
+                    }
+
+                    val decomposed =
+                      decompose(filter.filter.asInstanceOf[Set[Char]]).get
+                    writeNode(decomposed, false)
+
+                    mod match {
+                      case Codec.FilterMode.Inside =>
+                        visitLabel(lNoMatch)
+                        program += VM.Pop                          // mismatch
+                        program += VM.PushNoValue
+                        program += VM.Jump(lExit)
+                        visitLabel(lMatch)
+                        program += VM.C2A
+
+                      case Codec.FilterMode.Outside =>
+                        program += VM.Jump(lNoMatch)
+                        visitLabel(lMatch)
+                        program += VM.Pop                          // mismatch
+                        program += VM.PushNoValue
+                        program += VM.Jump(lExit)
+                        visitLabel(lNoMatch)
+                        program += VM.C2A
+                    }
+
+                    visitLabel(lExit)
+
+                    for (i <- program.indices) {
+                      program(i) match {
+                        case VM.Jump(l) => program(i) = VM.Jump(fixLabel(l))
+                        case VM.ACmpEq(l) => program(i) = VM.ACmpEq(fixLabel(l))
+                        case VM.ACmpNe(l) => program(i) = VM.ACmpNe(fixLabel(l))
+                        case VM.ICmpEq(l) => program(i) = VM.ICmpEq(fixLabel(l))
+                        case VM.ICmpNe(l) => program(i) = VM.ICmpNe(fixLabel(l))
+                        case VM.ICmpGt(l) => program(i) = VM.ICmpGt(fixLabel(l))
+                        case VM.ICmpLt(l) => program(i) = VM.ICmpLt(fixLabel(l))
+                        case VM.ICmpGtEq(l) => program(i) = VM.ICmpGtEq(fixLabel(l))
+                        case VM.ICmpLtEq(l) => program(i) = VM.ICmpLtEq(fixLabel(l))
+                        case _ => ()
+                      }
+                    }
+                  }
+
+                  program += VM.EndMethod(name)
+
+                  program.toArray
+                // format: on
+                case _ => default
+              }
 
             case Codec.Zip(left, right) =>
               val programL = Array(
@@ -470,8 +655,14 @@ trait CharCodecModule extends CodecModule {
 
     var r0: AnyRef = null.asInstanceOf[AnyRef]
 
+    def popInt(): Int = stack.pop().asInstanceOf[AnyVal] match {
+      case v: Int => v
+      case c: Char => c.toInt
+    }
+
     while (i < program.length) {
       val instr: CodecVM = program(i)
+      // System.err.println(f"$i%04d: $instr")
       instr match {
         case BeginMethod(_) =>
           callStack.push((-1).asInstanceOf[AnyRef])
@@ -485,6 +676,17 @@ trait CharCodecModule extends CodecModule {
         case CallMethod(_, address) =>
           callStack.push(i.asInstanceOf[AnyRef])
           i = address
+
+        case InputReadInt(None, None) =>
+          inputIndex += 1
+          if (inputIndex < inputLength) stack.push(input(inputIndex).asInstanceOf[AnyRef])
+          else stack.push((-1).asInstanceOf[AnyRef])
+          i += 1
+
+        case InputReadInt(_, _) => ???
+
+        case C2A =>
+          i += 1
 
         case InputRead(None, None) =>
           inputIndex += 1
@@ -528,8 +730,32 @@ trait CharCodecModule extends CodecModule {
         case Jump(ALabel(_, address)) =>
           i = address
 
+        case ICmpNe(ALabel(_, address)) =>
+          if (popInt() != popInt()) i = address else i += 1
+
         case ICmpEq(ALabel(_, address)) =>
-          if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = address else i += 1
+          if (popInt() == popInt()) i = address else i += 1
+
+        case ICmpLt(ALabel(_, address)) =>
+          val a = popInt()
+          val b = popInt()
+          if (b < a) i = address else i += 1
+
+        case ICmpLtEq(ALabel(_, address)) =>
+          val a = popInt()
+          val b = popInt()
+          if (b <= a) i = address else i += 1
+
+
+        case ICmpGt(ALabel(_, address)) =>
+          val a = popInt()
+          val b = popInt()
+          if (b > a) i = address else i += 1
+
+        case ICmpGtEq(ALabel(_, address)) =>
+          val a = popInt()
+          val b = popInt()
+          if (b >= a) i = address else i += 1
 
         case ACmpEq(ALabel(_, address)) =>
           if (stackPopResolve().eq(stackPopResolve())) i = address else i += 1
@@ -626,7 +852,7 @@ trait CharCodecModule extends CodecModule {
     }
   }
 
-  private class ByteClassLoader extends ClassLoader {
+  private[zio] class ByteClassLoader extends ClassLoader {
     def load(name: String, bytes: Array[Byte]): Method = {
       val c = defineClass(name, bytes, 0, bytes.length)
       val m = c.getMethods.find(_.getName == "run").get
@@ -634,7 +860,7 @@ trait CharCodecModule extends CodecModule {
     }
   }
 
-  private def compileCodecVM(instructions: Array[CodecVM], addresses: Map[Int, Int]): (String, Array[Byte]) = {
+  private[zio] def compileCodecVM(instructions: Array[CodecVM], addresses: Map[Int, Int]): (String, Array[Byte]) = {
     import CodecVM._
     import Opcodes._
 
@@ -751,6 +977,29 @@ trait CharCodecModule extends CodecModule {
           case CallMethod(name, _) =>
             m_callMethod(m, owner, name)
 
+          case InputReadInt(None, None) =>
+            val labelNoInput = new Label()
+            val labelDone    = new Label()
+
+            m.visitIincInsn(4, 1)
+
+            m.visitVarInsn(ILOAD, 4)
+            m.visitVarInsn(ALOAD, 2)
+            m.visitInsn(ARRAYLENGTH)
+            m.visitJumpInsn(IF_ICMPGE, labelNoInput)
+
+            m.visitVarInsn(ALOAD, 2)
+            m.visitVarInsn(ILOAD, 4)
+            m.visitInsn(CALOAD)
+            m.visitJumpInsn(GOTO, labelDone)
+
+            m.visitLabel(labelNoInput)
+            m.visitIntInsn(BIPUSH, -1)
+
+            m.visitLabel(labelDone)
+
+          case InputReadInt(_, _) => ???
+
           case InputRead(None, None) =>
             val labelNoInput = new Label()
             val labelDone    = new Label()
@@ -776,6 +1025,9 @@ trait CharCodecModule extends CodecModule {
           case InputRead(_, _) =>
             ???
 
+          case C2A =>
+            m.visitMethodInsn(INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;", false)
+
           case InputIdxLoad =>
             m.visitVarInsn(ILOAD, 4)
 
@@ -797,6 +1049,7 @@ trait CharCodecModule extends CodecModule {
             m_pushNoValue(m)
 
           case CheckSet(ASet(idx, _)) =>
+            System.err.println("checkSet")
             m.visitVarInsn(ALOAD, 1)
             m_pushInt(m, idx)
             m.visitInsn(AALOAD)
@@ -807,8 +1060,19 @@ trait CharCodecModule extends CodecModule {
           case Jump(ALabel(idx, _)) =>
             m.visitJumpInsn(GOTO, labels(idx)._1)
 
+          case ICmpNe(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ICMPNE, labels(idx)._1)
           case ICmpEq(ALabel(idx, _)) =>
             m.visitJumpInsn(IF_ICMPEQ, labels(idx)._1)
+
+          case ICmpLt(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ICMPLT, labels(idx)._1)
+          case ICmpLtEq(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ICMPLE, labels(idx)._1)
+          case ICmpGt(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ICMPGT, labels(idx)._1)
+          case ICmpGtEq(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ICMPGE, labels(idx)._1)
 
           case ACmpEq(ALabel(idx, _)) =>
             m.visitJumpInsn(IF_ACMPEQ, labels(idx)._1)
