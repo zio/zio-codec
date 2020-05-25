@@ -23,4 +23,7 @@ object Equiv {
   object Chars {
     final case object String extends Equiv[Chunk[Char], String]
   }
+
+  private[codec] def merge[A](arg: Either[A, A]): A =
+    arg.merge
 }

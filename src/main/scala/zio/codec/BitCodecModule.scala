@@ -26,20 +26,14 @@ trait BitCodecModule extends CodecModule {
         case CodecVM.Push(value) =>
           stack.push(value)
 
-        case CodecVM.Read(min, max) =>
+        case CodecVM.InputRead(min, max) =>
 //          if (inputIndex + min < input.length
 
         case CodecVM.CheckSet(s) =>
-          stack.push(s.contains(stack.pop()).asInstanceOf[AnyRef])
+          stack.push(s.set.contains(stack.pop()).asInstanceOf[AnyRef])
 
         case CodecVM.ACmpEq(address) =>
           if (stack.pop().eq(stack.pop())) i = address.address else i += 1
-
-        case CodecVM.Construct1(f) =>
-          stack.push(f(stack.pop()))
-
-        case CodecVM.Construct2(f) =>
-          stack.push(f(stack.pop(), stack.pop()))
 
         case CodecVM.Fail(err) =>
           return Left(DecodeError(err, i))
