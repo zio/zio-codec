@@ -5,8 +5,8 @@ import zio.Chunk
 sealed trait Equiv[A, B]
 
 object Equiv {
-  final case class Left[A, B](b: B)  extends Equiv[(A, B), A]
-  final case class Right[A, B](a: A) extends Equiv[(A, B), B]
+  final case class First[A, B](b: B)  extends Equiv[(A, B), A]
+  final case class Second[A, B](a: A) extends Equiv[(A, B), B]
 
   final case class Merge[A]() extends Equiv[Either[A, A], A]
 
