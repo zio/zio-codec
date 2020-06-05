@@ -132,30 +132,81 @@ trait CharCodecModule extends CodecModule {
                 VM.InputRead(None, None)
               )
 
-            case filter @ Codec.Filter0(value, _, mod) =>
+            case filter @ Codec.Filter0(value, values, mod) =>
               val program = Array(
                 VM.BeginMethod(name)
               ) ++ compile0(value(), offset + 1, chain1)
 
-              val lMatch = newLabel(offset + program.length + 9)
-              val lExit  = newLabel(offset + program.length + 9)
+              if (values.size == 1) {
+                val lMatch = newLabel(offset + program.length + 7)
+                val lExit  = newLabel(offset + program.length + 7)
 
-              // format: off
-              program ++ Array(
-                VM.Duplicate,
-                VM.IfLt(lExit),
+                // format: off
+                program ++ Array(
+                  VM.Duplicate,
+                  VM.IfLt(lExit),
 
-                VM.Duplicate,                    // filter
-                VM.Box, // todo: reimplement
-                VM.CheckSet(newSet0(filter)),
-                VM.PushInt(mod match { case Inside => 1; case Outside => 0 }),
-                VM.ICmpEq(lMatch),
+                  VM.Duplicate,
+                  VM.PushInt(values.head.toInt),
+                  mod match { case Inside => VM.ICmpEq(lMatch); case Outside => VM.ICmpNe(lMatch) },
 
-                VM.Pop,                          // mismatch
-                VM.PushInt(-1),
-                VM.EndMethod(name)               // match, exit
-              )
-              // format: on
+                  VM.Pop,                        // mismatch
+                  VM.PushInt(-1),
+                  VM.EndMethod(name)             // match, exit
+                )
+                // format: on
+              } else if (values.size <= 10) {
+                val lFound   = newLabel(offset + program.length + 2 + values.size * 3 + 2)
+                val lCompare = newLabel(offset + program.length + 2 + values.size * 3 + 3)
+                val lMatch   = newLabel(offset + program.length + 2 + values.size * 3 + 7)
+                val lExit    = newLabel(offset + program.length + 2 + values.size * 3 + 7)
+
+                // format: off
+                program ++ values.foldLeft(Array(
+                  VM.Duplicate,
+                  VM.IfLt(lExit)
+                )) {
+                  case (acc, v) =>
+                    acc ++ Array(
+                      VM.Duplicate,
+                      VM.PushInt(v.toInt),
+                      VM.ICmpEq(lFound)
+                    )
+                } ++ Array(
+                  VM.PushInt(0),
+                  VM.Jump(lCompare),
+
+                  VM.PushInt(1),                 // found
+                                                 // compare
+                  VM.PushInt(mod match { case Inside => 1; case Outside => 0 }),
+                  VM.ICmpEq(lMatch),
+
+                  VM.Pop,                        // mismatch
+                  VM.PushInt(-1),
+                  VM.EndMethod(name)             // match, exit
+                )
+                // format: on
+              } else {
+                val lMatch = newLabel(offset + program.length + 9)
+                val lExit  = newLabel(offset + program.length + 9)
+
+                // format: off
+                program ++ Array(
+                  VM.Duplicate,
+                  VM.IfLt(lExit),
+
+                  VM.Duplicate,                  // filter
+                  VM.Box,
+                  VM.CheckSet(newSet0(filter)),
+                  VM.PushInt(mod match { case Inside => 1; case Outside => 0 }),
+                  VM.ICmpEq(lMatch),
+
+                  VM.Pop,                        // mismatch
+                  VM.PushInt(-1),
+                  VM.EndMethod(name)             // match, exit
+                )
+                // format: on
+              }
           }
         } {
           case (name, address) =>
@@ -610,6 +661,9 @@ trait CharCodecModule extends CodecModule {
         case ICmpEq(ALabel(_, address)) =>
           if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i = address else i += 1
 
+        case ICmpNe(ALabel(_, address)) =>
+          if (stack.pop().asInstanceOf[Int] == stack.pop().asInstanceOf[Int]) i += 1 else i = address
+
         case ACmpEq(ALabel(_, address)) =>
           if (stackPopResolve().eq(stackPopResolve())) i = address else i += 1
 
@@ -896,6 +950,9 @@ trait CharCodecModule extends CodecModule {
 
           case ICmpEq(ALabel(idx, _)) =>
             m.visitJumpInsn(IF_ICMPEQ, labels(idx)._1)
+
+          case ICmpNe(ALabel(idx, _)) =>
+            m.visitJumpInsn(IF_ICMPNE, labels(idx)._1)
 
           case ACmpEq(ALabel(idx, _)) =>
             m.visitJumpInsn(IF_ACMPEQ, labels(idx)._1)

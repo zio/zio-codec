@@ -86,6 +86,7 @@ trait CodecModule {
 
   sealed trait Codec0 { self =>
     final def oneOf(values: Input*): Codec0      = filter(values.toSet)
+    final def notOneOf(values: Input*): Codec0   = filterNot(values.toSet)
     final def filter(set: Set[Input]): Codec0    = Filter0(() => self, set, FilterMode.Inside)
     final def filterNot(set: Set[Input]): Codec0 = Filter0(() => self, set, FilterMode.Outside)
 
