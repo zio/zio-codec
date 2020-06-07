@@ -10,8 +10,7 @@ import zio.internal.Stack
 import scala.runtime.BoxedUnit
 
 trait CharCodecModule extends CodecModule {
-  type Input     = Char
-  type CharCodec = Codec0
+  type Input = Char
 
   // todo: consumeN
   def token(t: String): Codec[Chunk[Input]] =
@@ -20,7 +19,7 @@ trait CharCodecModule extends CodecModule {
   def tokenAs[A](t: String, v: A): Codec[A] =
     token(t).as(v, Chunk.fromIterable(t))
 
-  def charBetween(begin: Input, end: Input): CharCodec =
+  def charBetween(begin: Input, end: Input): Codec[Input] =
     consume.filter((begin to end).toSet)
 
   def interpreterDecoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
@@ -32,9 +31,6 @@ trait CharCodecModule extends CodecModule {
   def encoder[A](codec: Codec[A]): A => Either[EncodeError, Chunk[Input]] = ???
 
   def printer[A](codec: Codec[A]): List[String] = ???
-
-  def decoder(codec: CharCodec): Chunk[Input] => Either[DecodeError, (Int, Input)] =
-    decoder(Codec.Box(() => codec))
 
   def decoder[A](codec: Codec[A]): Chunk[Input] => Either[DecodeError, (Int, A)] = {
     val CodecCompilationResult(program, labels, values, lookups) = compileCodec(codec)
@@ -117,7 +113,7 @@ trait CharCodecModule extends CodecModule {
           VM.AValue(idx, v)
       }
 
-    def compile0(codec: CharCodec, offset: Int, chain: Map[AnyRef, (String, Int)]): Array[CodecVM] =
+    def compile0(codec: Codec0, offset: Int, chain: Map[AnyRef, (String, Int)]): Array[CodecVM] =
       chain
         .get(codec)
         .fold[Array[CodecVM]] {
@@ -214,7 +210,7 @@ trait CharCodecModule extends CodecModule {
             Array(VM.CallMethod(name, address + 1))
         }
 
-    def compile[A0](codec: Codec[A0], offset: Int, chain: Map[AnyRef, (String, Int)]): Array[CodecVM] = {
+    def compile[A0](codec: Codec1[A0], offset: Int, chain: Map[AnyRef, (String, Int)]): Array[CodecVM] = {
       chain
         .get(codec)
         .fold[Array[CodecVM]] {
@@ -235,7 +231,7 @@ trait CharCodecModule extends CodecModule {
               )
 
             case Codec.Box(codec) =>
-              val program = compile0(codec(), offset, chain1)
+              val program = compile0(codec, offset, chain1)
 
               val lNoValue = newLabel(offset + program.length + 4)
               val lExit    = newLabel(offset + program.length + 6)
@@ -558,7 +554,10 @@ trait CharCodecModule extends CodecModule {
         }
     }
 
-    val ret0 = compile(codec, 0, Map.empty)
+    val ret0 = codec match {
+      case c0: Codec0    => compile(Codec.boxed(c0), 0, Map.empty)
+      case c1: Codec1[_] => compile(c1, 0, Map.empty)
+    }
 
     // optimization: inline methods
     val ret1 = ret0.map {

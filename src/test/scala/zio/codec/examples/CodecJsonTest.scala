@@ -23,19 +23,19 @@ object CodecJsonTest {
   import Js._
   import JsonCodec._
 
-  val dot: CharCodec      = consume.oneOf('.')
-  val comma: CharCodec    = consume.oneOf(',')
-  val colon: CharCodec    = consume.oneOf(':')
-  val quote: CharCodec    = consume.oneOf('"')
-  val bracket1: CharCodec = consume.oneOf('[')
-  val bracket2: CharCodec = consume.oneOf(']')
-  val brace1: CharCodec   = consume.oneOf('{')
-  val brace2: CharCodec   = consume.oneOf('}')
+  val dot: Codec[Char]      = consume.oneOf('.')
+  val comma: Codec[Char]    = consume.oneOf(',')
+  val colon: Codec[Char]    = consume.oneOf(':')
+  val quote: Codec[Char]    = consume.oneOf('"')
+  val bracket1: Codec[Char] = consume.oneOf('[')
+  val bracket2: Codec[Char] = consume.oneOf(']')
+  val brace1: Codec[Char]   = consume.oneOf('{')
+  val brace2: Codec[Char]   = consume.oneOf('}')
 
   val spacing: Codec[Unit] =
     consume.oneOf(' ', '\n', '\r').rep.ignore(Chunk.empty)
 
-  val digit: CharCodec               = charBetween('0', '9')
+  val digit: Codec[Char]             = charBetween('0', '9')
   val sign: Codec[Option[Char]]      = consume.oneOf('-', '+').option
   val fractional: Codec[Chunk[Char]] = (dot, '.') ~> digit.rep
   val exponent: Codec[Chunk[Char]]   = (consume.oneOf('e', 'E') ~ sign, ('E', Some('+'))) ~> digit.rep
