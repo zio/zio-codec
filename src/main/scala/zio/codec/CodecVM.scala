@@ -19,10 +19,13 @@ object CodecVM {
   private[zio] final case class  Push(value: AValue)                       extends CodecVM // push value to stack
   private[zio] final case class  PushInt(value: Int)                       extends CodecVM // push int value to stack
   private[zio] final case object PushNoValue                               extends CodecVM // push NoValue to stack
+  private[zio] final case object Box                                       extends CodecVM // box top primitive value on the stack
   private[zio] final case class  CheckSet(set: ASet)                       extends CodecVM // pop 1, test if in the set, push the result as boolean to stack
 
   private[zio] final case class Jump(label: ALabel)                       extends CodecVM // unconditional jump to new address
+  private[zio] final case class IfLt(label: ALabel)                       extends CodecVM // pop 1 value and jump to new address if it is less than 0
   private[zio] final case class ICmpEq(label: ALabel)                     extends CodecVM // pop 2 integers and jump to new address if they are equal
+  private[zio] final case class ICmpNe(label: ALabel)                     extends CodecVM // pop 2 integers and jump to new address if they are not equal
   private[zio] final case class ACmpEq(label: ALabel)                     extends CodecVM // pop 2 references and jump to new address if they are equal
   private[zio] final case class ACmpNe(label: ALabel)                     extends CodecVM // pop 2 references and jump to new address if they are not equal
 

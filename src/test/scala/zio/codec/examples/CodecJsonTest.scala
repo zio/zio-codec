@@ -129,6 +129,11 @@ object CodecJsonTest {
   //   100,000  in  3.3 sec
   // 1,000,000  in 24.9 sec
 
+  // parserz 0.2.0-α
+  //    10,000  in    - sec
+  //   100,000  in  1.9 sec
+  // 1,000,000  in 14.1 sec
+
   // zio-codec 0.0.1
   //    10,000  in  0.8 sec
   //   100,000  in  4.1 sec
